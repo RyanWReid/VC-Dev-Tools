@@ -1,0 +1,6 @@
+@VCDevTool.API_HostAddress = http://localhost:5289
+
+GET {{VCDevTool.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

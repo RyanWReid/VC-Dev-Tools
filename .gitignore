@@ -1,0 +1,4 @@
+.cursor/rules/cnet.mdc
+# Visual Studio / .NET build outputs
+VCDevTool.Client\bin
+VCDevTool.Client\obj
