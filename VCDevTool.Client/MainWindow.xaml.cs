@@ -52,9 +52,7 @@ public partial class MainWindow : Window
     private IntPtr _dropTargetHandle;
 
     public MainWindow()
-    {
-        InitializeComponent();
-        
+    {        
         // Add key down event handler for the window
         this.KeyDown += MainWindow_KeyDown;
         
@@ -161,7 +159,7 @@ public partial class MainWindow : Window
             }
         }
     }
-    
+
     protected override void OnClosed(EventArgs e)
     {
         base.OnClosed(e);
@@ -216,13 +214,19 @@ public partial class MainWindow : Window
             e.Effects = isValid ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
             
             // Change border color when valid folder is dragged over
-            DirectoryBorder.BorderBrush = isValid ? _dropTargetBrush : _normalBorderBrush;
+            if (FindName("DirectoryBorder") is System.Windows.Controls.Border border)
+            {
+                border.BorderBrush = isValid ? _dropTargetBrush : _normalBorderBrush;
+            }
         }
         catch (Exception ex)
         {
             System.Windows.MessageBox.Show($"Error during drag over: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             e.Effects = System.Windows.DragDropEffects.None;
-            DirectoryBorder.BorderBrush = _normalBorderBrush;
+            if (FindName("DirectoryBorder") is System.Windows.Controls.Border borderAfter)
+            {
+                borderAfter.BorderBrush = _normalBorderBrush;
+            }
         }
         
         // Mark as handled so TextBox doesn't interfere
@@ -425,5 +429,34 @@ public partial class MainWindow : Window
                 this.DragMove();
             }
         }
+    }
+
+    private void DebugOutputTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        // Use BeginInvoke to delay scrolling until after layout is complete
+        Dispatcher.BeginInvoke((Action)(() =>
+        {
+            // Try both scrolling methods for maximum compatibility
+            try
+            {
+                // Method 1: Use the TextBox directly
+                if (sender is System.Windows.Controls.TextBox textBox)
+                {
+                    textBox.ScrollToEnd();
+                }
+                
+                // Method 2: Use the parent ScrollViewer directly if available
+                if (sender is FrameworkElement element && 
+                    element.Parent is System.Windows.Controls.ScrollViewer scrollViewer)
+                {
+                    scrollViewer.ScrollToBottom();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Silently handle any scrolling errors
+                System.Diagnostics.Debug.WriteLine($"Error scrolling debug output: {ex.Message}");
+            }
+        }), System.Windows.Threading.DispatcherPriority.Background);
     }
 }

@@ -27,6 +27,7 @@ namespace VCDevTool.Client.ViewModels
         private ApiClient _apiClient;
         private NodeService _nodeService;
         private TaskExecutionService _taskExecutionService;
+        private AuthenticationService _authenticationService;
         private bool _isConnected;
         private bool _isLoading;
         private string? _statusMessage;
@@ -64,7 +65,8 @@ namespace VCDevTool.Client.ViewModels
         private WatcherViewModel _watcher;
         private bool _isTaskDetailViewVisible;
         private TaskViewModel? _selectedTask;
-        public ICommand AbortProcessCommand => _abortProcessCommand ??= new RelayCommand(_ => AbortProcess(), _ => CanAbortProcess());
+        private RelayCommand? _abortTaskCommand;
+        public ICommand AbortTaskCommand => _abortTaskCommand ??= new RelayCommand(_ => AbortTask(), _ => SelectedTask?.CanAbort == true);
         
         private bool CanAbortProcess() => SelectedNode?.HasActiveTask == true;
         
@@ -99,9 +101,15 @@ namespace VCDevTool.Client.ViewModels
 
         public MainViewModel()
         {
-            _apiClient = new ApiClient(_serverAddress);
-            _nodeService = new NodeService(_apiClient);
+            // Create a shared authentication service
+            _authenticationService = new AuthenticationService(_serverAddress);
+            
+            _apiClient = new ApiClient(_serverAddress, _authenticationService);
+            _nodeService = new NodeService(_apiClient, _authenticationService);
             _taskExecutionService = new TaskExecutionService(_apiClient, _nodeService);
+            
+            // Subscribe to authentication changes
+            _authenticationService.AuthenticationChanged += OnAuthenticationStatusChanged;
             
             // Initialize collections
             Nodes = new ObservableCollection<NodeViewModel>();
@@ -228,11 +236,7 @@ namespace VCDevTool.Client.ViewModels
             OpenAddDirectoryFormCommand = new RelayCommand(_ => OpenAddDirectoryForm());
             CloseAddDirectoryFormCommand = new RelayCommand(_ => CloseAddDirectoryForm());
 
-            ShowTaskDetailsCommand = new RelayCommand(task => {
-                SelectedTask = (TaskViewModel)task;
-                IsTaskDetailViewVisible = true;
-            });
-
+            ShowTaskDetailsCommand = new RelayCommand(ShowTaskDetails);
             CloseTaskDetailsCommand = new RelayCommand(_ => {
                 IsTaskDetailViewVisible = false;
             });
@@ -1007,6 +1011,28 @@ namespace VCDevTool.Client.ViewModels
 
         public WatcherViewModel Watcher => _watcher;
 
+        // Authentication Status Properties
+        public bool IsAuthenticationEnabled => _authenticationService?.IsAuthenticated ?? false;
+        public string AuthenticationStatus => _authenticationService?.IsAuthenticated == true 
+            ? $"Authenticated as {_authenticationService.CurrentNodeId}" 
+            : "Not Authenticated";
+        public string AuthenticationStatusColor => _authenticationService?.IsAuthenticated == true ? "#28A745" : "#DC3545";
+        public string AuthenticationStatusTextColor => _authenticationService?.IsAuthenticated == true ? "#FFFFFF" : "#FFFFFF";
+        public string AuthenticationStatusIconColor => _authenticationService?.IsAuthenticated == true ? "#FFFFFF" : "#FFFFFF";
+
+        private void OnAuthenticationStatusChanged(object? sender, AuthenticationEventArgs e)
+        {
+            // Update authentication status properties on UI thread
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+            {
+                OnPropertyChanged(nameof(IsAuthenticationEnabled));
+                OnPropertyChanged(nameof(AuthenticationStatus));
+                OnPropertyChanged(nameof(AuthenticationStatusColor));
+                OnPropertyChanged(nameof(AuthenticationStatusTextColor));
+                OnPropertyChanged(nameof(AuthenticationStatusIconColor));
+            });
+        }
+
         private void InitializeMaterialScannerOptions()
         {
             // Initialize with the default or previously saved scan path
@@ -1232,44 +1258,68 @@ namespace VCDevTool.Client.ViewModels
             try
             {
                 IsLoading = true;
+                ConnectionStatus = "Initializing...";
                 
-                // Try to start the API if not running
-                await StartApiServiceAsync();
-                
-                // Connect to the API
+                // Test API connection first
+                ConnectionStatus = "Testing API connection...";
                 bool connected = await _apiClient.TestConnectionAsync();
+                
                 if (connected)
                 {
-                    // Register our node
-                    await _nodeService.RegisterNodeAsync();
-                    
-                    // Refresh initial data
-                    await RefreshDataAsync();
-                    
-                    // Start the refresh timer
-                    StartPeriodicRefresh();
-                    
-                    // Start the task polling to display messages
-                    _taskExecutionService.StartTaskPolling();
-                    
-                    // Start the debug hub connection
-                    var app = (App)System.Windows.Application.Current;
-                    if (app.DebugHubClient != null)
-                    {
-                        await app.DebugHubClient.StartAsync();
-                    }
-                    
+                    ConnectionStatus = "API connected, authenticating...";
                     IsConnected = true;
+
+                    try
+                    {
+                        // Register our node (this handles authentication internally)
+                        var registeredNode = await _nodeService.RegisterNodeAsync();
+                        ConnectionStatus = "Connected and authenticated";
+                        
+                        DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Initialized and authenticated as node: {registeredNode.Id}\n";
+                        
+                        // Refresh initial data (nodes and tasks)
+                        await RefreshDataAsync();
+
+                        // Start the refresh timer for periodic updates
+                        StartPeriodicRefresh();
+
+                        // Start the task polling to display messages
+                        _taskExecutionService.StartTaskPolling();
+
+                        // Start the debug hub connection if available
+                        var app = (App)System.Windows.Application.Current;
+                        if (app.DebugHubClient != null)
+                        {
+                            await app.DebugHubClient.StartAsync();
+                        }
+                    }
+                    catch (Exception authEx)
+                    {
+                        ConnectionStatus = $"Authentication failed: {authEx.Message}";
+                        IsConnected = false;
+                        DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Authentication failed during initialization: {authEx.Message}\n";
+                        
+                        // Don't show message box during initialization, just log it
+                        System.Diagnostics.Debug.WriteLine($"Authentication failed during initialization: {authEx.Message}");
+                    }
                 }
                 else
                 {
+                    ConnectionStatus = "API not accessible - offline mode";
                     IsConnected = false;
+                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] API not accessible during initialization - running in offline mode\n";
+                    
+                    // Still start polling and other services even if API is not available
+                    StartPeriodicRefresh();
+                    _taskExecutionService.StartTaskPolling();
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error initializing: {ex.Message}");
+                ConnectionStatus = $"Initialization error: {ex.Message}";
                 IsConnected = false;
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Initialization error: {ex.Message}\n";
+                System.Diagnostics.Debug.WriteLine($"Error initializing: {ex.Message}");
             }
             finally
             {
@@ -1496,9 +1546,29 @@ namespace VCDevTool.Client.ViewModels
             try
             {
                 // Get nodes and tasks from API
-                var nodes = await _apiClient.GetAvailableNodesAsync();
-                System.Diagnostics.Debug.WriteLine($"Received {nodes.Count} nodes from API");
-                var tasks = await _apiClient.GetTasksAsync();
+                List<ComputerNode> nodes;
+                try
+                {
+                    nodes = await _apiClient.GetAvailableNodesAsync();
+                    System.Diagnostics.Debug.WriteLine($"Received {nodes.Count} nodes from API");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error getting nodes from API: {ex.Message}");
+                    // If we can't get nodes from API, start with empty list but always include current node
+                    nodes = new List<ComputerNode>();
+                }
+                
+                List<BatchTask> tasks;
+                try
+                {
+                    tasks = await _apiClient.GetTasksAsync();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error getting tasks from API: {ex.Message}");
+                    tasks = new List<BatchTask>();
+                }
                 
                 // Keep track of current node ID
                 string currentNodeId = _nodeService.CurrentNode.Id;
@@ -1509,14 +1579,16 @@ namespace VCDevTool.Client.ViewModels
                 // Use a dictionary to track the nodes by ID to prevent duplicates
                 var uniqueNodes = new Dictionary<string, ComputerNode>();
                 
-                // Add the current node first to ensure it's included
-                uniqueNodes[currentNodeId] = new ComputerNode {
+                // ALWAYS add the current node first to ensure it's included
+                var currentNode = new ComputerNode {
                     Id = currentNodeId,
                     Name = Environment.MachineName,
                     IpAddress = _nodeService.CurrentNode.IpAddress,
                     IsAvailable = _isActivated,
                     LastHeartbeat = DateTime.UtcNow
                 };
+                uniqueNodes[currentNodeId] = currentNode;
+                System.Diagnostics.Debug.WriteLine($"Added current node: {currentNode.Id} - {currentNode.Name}");
                 
                 // Add or update with nodes from the API
                 foreach (var node in nodes)
@@ -1533,12 +1605,16 @@ namespace VCDevTool.Client.ViewModels
                             LastHeartbeat = node.LastHeartbeat
                         };
                         uniqueNodes[node.Id] = updatedNode;
+                        System.Diagnostics.Debug.WriteLine($"Updated current node from API: {updatedNode.Id} - {updatedNode.Name}");
                     }
                     else
                     {
                         uniqueNodes[node.Id] = node;
+                        System.Diagnostics.Debug.WriteLine($"Added node from API: {node.Id} - {node.Name}");
                     }
                 }
+                
+                System.Diagnostics.Debug.WriteLine($"Total unique nodes to process: {uniqueNodes.Count}");
                 
                 // First remove any nodes that are no longer present
                 System.Windows.Application.Current.Dispatcher.Invoke(() => {
@@ -1547,6 +1623,7 @@ namespace VCDevTool.Client.ViewModels
                         var nodeVM = Nodes[i];
                         if (!uniqueNodes.ContainsKey(nodeVM.Id))
                         {
+                            System.Diagnostics.Debug.WriteLine($"Removing node: {nodeVM.Id} - {nodeVM.Name}");
                             Nodes.RemoveAt(i);
                         }
                     }
@@ -1561,17 +1638,21 @@ namespace VCDevTool.Client.ViewModels
                     if (existingNode != null)
                     {
                         // Update existing node
+                        System.Diagnostics.Debug.WriteLine($"Updating existing node: {node.Id} - {node.Name}");
                         existingNode.UpdateFromNode(node);
                     }
                     else
                     {
                         // Add new node
                         var newNode = new NodeViewModel(node);
+                        System.Diagnostics.Debug.WriteLine($"Adding new node: {node.Id} - {node.Name}");
                         System.Windows.Application.Current.Dispatcher.Invoke(() => {
                             Nodes.Add(newNode);
                         });
                     }
                 }
+                
+                System.Diagnostics.Debug.WriteLine($"Final node count in UI: {Nodes.Count}");
                 
                 // Update tasks for nodes
                 foreach (var task in tasks)
@@ -1648,6 +1729,7 @@ namespace VCDevTool.Client.ViewModels
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Error refreshing data: {ex.Message}");
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] ERROR refreshing data: {ex.Message}\n";
             }
         }
 
@@ -1717,163 +1799,87 @@ namespace VCDevTool.Client.ViewModels
             {
                 IsLoading = true;
                 
-                // For TestMessage, validate message
-                if (IsTestMessageSelected && string.IsNullOrWhiteSpace(MessageText))
-                {
-                    System.Windows.MessageBox.Show("Please enter a message.");
-                    return;
-                }
-                
-                // Validate directory if selected for file processes
-                if (IsFileProcessSelected && _selectedDirectories.Count == 0)
-                {
-                    System.Windows.MessageBox.Show("Please select at least one directory.");
-                    return;
-                }
-                
-                // Get the list of selected nodes for distribution
-                List<string> selectedNodeIds = new List<string>();
-                
-                // Get all selected nodes from the AvailableDevices collection
-                selectedNodeIds = AvailableDevices
+                // Get selected node IDs
+                var selectedNodeIds = AvailableDevices
                     .Where(d => d.IsSelected)
                     .Select(d => d.NodeId)
                     .ToList();
                 
                 if (!selectedNodeIds.Any())
                 {
-                    System.Windows.MessageBox.Show("Please select at least one device.");
-                    IsLoading = false;
+                    System.Windows.MessageBox.Show("Please select at least one node to run the process.");
                     return;
                 }
                 
-                // compute distribute flag: true if user requested or if more than one device is selected
-                var distribute = ShouldDistributeTask || selectedNodeIds.Count > 1;
-                
-                var parameters = new Dictionary<string, string>();
-                
-                // Add appropriate parameters based on process type
-                if (IsTestMessageSelected)
+                // Create parameters dictionary
+                var parameters = new Dictionary<string, string>
                 {
-                    parameters.Add("MessageText", MessageText);
+                    ["Directories"] = JsonSerializer.Serialize(SelectedDirectories)
+                };
+                
+                // Add task-specific parameters
+                if (SelectedProcessType == TaskType.TestMessage)
+                {
+                    parameters["MessageText"] = MessageText;
+                    parameters["SenderName"] = CurrentNode.Name;
                 }
-                else
+                else if (SelectedProcessType == TaskType.VolumeCompression)
                 {
-                    parameters.Add("Directory", SelectedDirectory);
-                    parameters.Add("Directories", JsonSerializer.Serialize(_selectedDirectories));
-                    parameters.Add("Distribute", distribute.ToString());
-                    
-                    // Add the fixed dimension parameter if volume compression task is selected 
-                    if (SelectedProcessType == TaskType.VolumeCompression)
+                    parameters["UseFixedDimension"] = UseFixedDimension.ToString();
+                    parameters["UseSdDimension"] = UseSdDimension.ToString();
+                    parameters["CompressionLevel"] = SelectedCompressionLevel;
+                    parameters["CreateOutputFolder"] = CreateOutputFolder.ToString();
+                    parameters["OverrideOutputDirectory"] = UseOverrideOutputDirectory.ToString();
+                    if (UseOverrideOutputDirectory && !string.IsNullOrEmpty(OutputDirectory))
                     {
-                        parameters.Add("UseFixedDimension", UseFixedDimension.ToString());
-                        parameters.Add("UseSdDimension", UseSdDimension.ToString());
-                        parameters.Add("CreateOutputFolder", CreateOutputFolder.ToString());
-                        parameters.Add("CompressionLevel", SelectedCompressionLevel);
-                        parameters.Add("DensityLevel", SelectedDensityLevel);
-                        
-                        // Add output directory override if enabled
-                        if (UseOverrideOutputDirectory && !string.IsNullOrEmpty(OutputDirectory))
-                        {
-                            parameters.Add("OverrideOutputDirectory", "true");
-                            parameters.Add("OutputDirectory", OutputDirectory);
-                        }
-                        else
-                        {
-                            parameters.Add("OverrideOutputDirectory", "false");
-                        }
+                        parameters["OutputDirectory"] = OutputDirectory;
                     }
                 }
                 
-                parameters.Add("SelectedNodes", JsonSerializer.Serialize(selectedNodeIds));
-                
-                // For TestMessage, create a proper task and send it to the API
-                if (IsTestMessageSelected)
+                // Create a single task with multiple assigned nodes
+                var task = new BatchTask
                 {
-                    // Create a batch task for each selected node
-                    foreach (var nodeId in selectedNodeIds)
-                    {
-                        var task = new BatchTask
-                        {
-                            Name = "Test Message",
-                            Type = TaskType.TestMessage,
-                            Status = BatchTaskStatus.Pending,
-                            CreatedAt = DateTime.UtcNow,
-                            AssignedNodeId = nodeId, // Assign directly to target node
-                            Parameters = JsonSerializer.Serialize(new Dictionary<string, string> {
-                                { "MessageText", MessageText },
-                                { "SenderName", Environment.MachineName }
-                            })
-                        };
-                        
-                        try 
-                        {
-                            // Send the task to the API
-                            var createdTask = await _apiClient.CreateTaskAsync(task);
-                            if (createdTask == null)
-                            {
-                                System.Windows.MessageBox.Show($"Failed to create message task for node: {nodeId}");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Windows.MessageBox.Show($"Error sending message to {nodeId}: {ex.Message}");
-                        }
-                    }
-                    
-                    System.Windows.MessageBox.Show("Messages have been sent to selected computers.", 
-                                                  "Messages Sent", 
-                                                  MessageBoxButton.OK, 
-                                                  MessageBoxImage.Information);
-                    
-                    IsNewProcessDialogOpen = false; // Close the dialog on success
-                    return;
-                }
-                
-                // For other task types, proceed with normal API process
-                var firstNodeId = selectedNodeIds.FirstOrDefault();
-                var mainTask = new BatchTask
-                {
+                    Name = SelectedProcessType.ToString(),
                     Type = SelectedProcessType,
                     Status = BatchTaskStatus.Pending,
                     CreatedAt = DateTime.UtcNow,
-                    AssignedNodeId = firstNodeId, // Assign to first node initially
+                    AssignedNodeId = selectedNodeIds.First(), // Keep first node for backward compatibility
+                    AssignedNodeIds = JsonSerializer.Serialize(selectedNodeIds), // Store all selected nodes
                     Parameters = JsonSerializer.Serialize(parameters)
                 };
                 
-                var createdMainTask = await _apiClient.CreateTaskAsync(mainTask);
-                if (createdMainTask != null)
+                var createdTask = await _apiClient.CreateTaskAsync(task);
+                if (createdTask != null)
                 {
-                    bool allAssigned = true;
-                    
-                    // If distribute is true, assign to all selected nodes
-                    if (distribute)
+                    // Pre-scan volume compression tasks to create folder progress records
+                    if (createdTask.Type == TaskType.VolumeCompression)
                     {
-                        foreach (var nodeId in selectedNodeIds)
-                        {
-                            var assigned = await _apiClient.AssignTaskToNodeAsync(createdMainTask.Id, nodeId);
-                            if (!assigned)
-                            {
-                                allAssigned = false;
-                                System.Windows.MessageBox.Show($"Failed to assign task to node: {nodeId}");
-                            }
-                        }
+                        await _taskExecutionService.PreScanVolumeCompressionTaskAsync(createdTask);
                     }
-                    else
+                    
+                    // Assign the task to all selected nodes
+                    bool allAssigned = true;
+                    foreach (var nodeId in selectedNodeIds)
                     {
-                        // Assign to the single selected node
-                        allAssigned = await _apiClient.AssignTaskToNodeAsync(createdMainTask.Id, selectedNodeIds.First());
+                        bool assigned = await _apiClient.AssignTaskToNodeAsync(createdTask.Id, nodeId);
+                        if (!assigned)
+                        {
+                            allAssigned = false;
+                            DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Warning: Failed to assign task to node {nodeId}\n";
+                        }
                     }
                     
                     if (allAssigned)
                     {
-                        await RefreshDataAsync();
-                        IsNewProcessDialogOpen = false; // Close the dialog on success
+                        DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Created task {createdTask.Id} assigned to {selectedNodeIds.Count} nodes\n";
                     }
-                    else if (!distribute)
+                    else
                     {
-                        System.Windows.MessageBox.Show("Failed to assign task to node.");
+                        DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Created task {createdTask.Id} but some node assignments failed\n";
                     }
+                    
+                    await RefreshDataAsync();
+                    IsNewProcessDialogOpen = false; // Close the dialog on success
                 }
                 else
                 {
@@ -1965,29 +1971,67 @@ namespace VCDevTool.Client.ViewModels
                     await app.DebugHubClient.StartAsync();
                 }
 
-                // Test the connection
+                // Test the connection first
+                ConnectionStatus = "Testing connection...";
                 bool connected = await _apiClient.TestConnectionAsync();
-                if (connected)
+                if (!connected)
                 {
-                    ConnectionStatus = "Connected";
+                    ConnectionStatus = "Failed to connect to server";
+                    IsConnected = false;
+                    return;
+                }
+
+                ConnectionStatus = "Server connected, authenticating...";
+                
+                try
+                {
+                    // Register our node (this handles authentication internally)
+                    var registeredNode = await _nodeService.RegisterNodeAsync();
+                    
+                    ConnectionStatus = "Connected and authenticated";
                     IsConnected = true;
                     
-                    // Register our node
-                    await _nodeService.RegisterNodeAsync();
+                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Successfully connected and authenticated as node: {registeredNode.Id}\n";
                     
                     // Refresh data
                     await RefreshDataAsync();
                 }
-                else
+                catch (UnauthorizedAccessException authEx)
                 {
-                    ConnectionStatus = "Failed to connect";
+                    ConnectionStatus = $"Authentication failed: {authEx.Message}";
                     IsConnected = false;
+                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Authentication error: {authEx.Message}\n";
+                    
+                    MessageBox.Show(
+                        $"Failed to authenticate with the server:\n{authEx.Message}\n\nPlease check your server connection and try again.",
+                        "Authentication Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                catch (Exception regEx)
+                {
+                    ConnectionStatus = $"Registration failed: {regEx.Message}";
+                    IsConnected = false;
+                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Registration error: {regEx.Message}\n";
+                    
+                    MessageBox.Show(
+                        $"Failed to register with the server:\n{regEx.Message}\n\nThis may be due to server configuration issues.",
+                        "Registration Error",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
                 }
             }
             catch (Exception ex)
             {
                 ConnectionStatus = $"Connection error: {ex.Message}";
                 IsConnected = false;
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Connection error: {ex.Message}\n";
+                
+                MessageBox.Show(
+                    $"Failed to connect to the server:\n{ex.Message}",
+                    "Connection Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }
 
@@ -2276,6 +2320,12 @@ namespace VCDevTool.Client.ViewModels
                     // Sort tasks by status and creation date
                     SortTasksByStatus();
                 });
+                
+                // Refresh folder progress for the currently selected task if it's a volume compression task
+                if (IsTaskDetailViewVisible && SelectedTask != null && SelectedTask.Type == TaskType.VolumeCompression)
+                {
+                    await RefreshCurrentTaskFolderProgressAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -2283,6 +2333,71 @@ namespace VCDevTool.Client.ViewModels
             }
         }
         
+        private async Task RefreshCurrentTaskFolderProgressAsync()
+        {
+            if (SelectedTask == null) return;
+            
+            try
+            {
+                var folderProgressList = await _apiClient.GetTaskFoldersAsync(SelectedTask.Id);
+                var folderProgressViewModels = new ObservableCollection<TaskFolderProgressViewModel>(
+                    folderProgressList.Select(fp => new TaskFolderProgressViewModel(fp))
+                );
+
+                // Update the UI on the main thread
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (SelectedTask != null && IsTaskDetailViewVisible)
+                    {
+                        SelectedTask.UpdateFolderProgress(folderProgressViewModels);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error refreshing current task folder progress: {ex.Message}");
+            }
+        }
+
+        private void ShowTaskDetails(object parameter)
+        {
+            if (parameter is TaskViewModel task)
+            {
+                SelectedTask = task;
+                IsTaskDetailViewVisible = true;
+                
+                // Load folder progress for volume compression tasks
+                if (task.Type == TaskType.VolumeCompression)
+                {
+                    _ = Task.Run(async () => await LoadTaskFolderProgressAsync(task.Id));
+                }
+            }
+        }
+
+        private async Task LoadTaskFolderProgressAsync(int taskId)
+        {
+            try
+            {
+                var folderProgressList = await _apiClient.GetTaskFoldersAsync(taskId);
+                var folderProgressViewModels = new ObservableCollection<TaskFolderProgressViewModel>(
+                    folderProgressList.Select(fp => new TaskFolderProgressViewModel(fp))
+                );
+
+                // Update the UI on the main thread
+                await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    if (SelectedTask != null && SelectedTask.Id == taskId)
+                    {
+                        SelectedTask.UpdateFolderProgress(folderProgressViewModels);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error loading task folder progress: {ex.Message}");
+            }
+        }
+
         private void SortTasksByStatus()
         {
             // First filter to only include active tasks (Running and Pending),
@@ -2299,6 +2414,154 @@ namespace VCDevTool.Client.ViewModels
             foreach (var task in activeTasks)
             {
                 Tasks.Add(task);
+            }
+        }
+
+        public bool IsTaskDetailViewVisible
+        {
+            get => _isTaskDetailViewVisible;
+            set
+            {
+                if (_isTaskDetailViewVisible != value)
+                {
+                    _isTaskDetailViewVisible = value;
+                    OnPropertyChanged(nameof(IsTaskDetailViewVisible));
+                }
+            }
+        }
+
+        public TaskViewModel? SelectedTask
+        {
+            get => _selectedTask;
+            set
+            {
+                if (_selectedTask != value)
+                {
+                    _selectedTask = value;
+                    OnPropertyChanged(nameof(SelectedTask));
+                }
+            }
+        }
+
+        public ICommand ShowTaskDetailsCommand { get; }
+        public ICommand CloseTaskDetailsCommand { get; }
+
+        private async void AbortTask()
+        {
+            if (SelectedTask == null || !SelectedTask.CanAbort)
+                return;
+
+            var result = MessageBox.Show(
+                $"Are you sure you want to cancel this task?",
+                "Cancel Task",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning
+            );
+            if (result != MessageBoxResult.Yes) return;
+
+            try
+            {
+                IsLoading = true;
+                await _taskExecutionService.AbortCurrentTask(SelectedTask.AssignedNodeId);
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Task abort requested for node {SelectedTask.AssignedNodeName}\n";
+                await RefreshTaskListAsync();
+                OnPropertyChanged(nameof(SelectedTask));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to cancel task: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] ERROR: {ex.Message}\n";
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+
+        private async Task AddSampleNodesAsync()
+        {
+            try {
+                // Clear existing nodes for testing purposes to avoid duplicates
+                System.Windows.Application.Current.Dispatcher.Invoke(() => {
+                    Nodes.Clear();
+                });
+                
+                // Add the current node (user's own PC)
+                var currentNodeData = new ComputerNode
+                {
+                    Id = _nodeService.CurrentNode.Id,
+                    Name = _nodeService.CurrentNode.Name,
+                    IpAddress = _nodeService.CurrentNode.IpAddress,
+                    IsAvailable = _isActivated, // Set availability based on toggle
+                    LastHeartbeat = DateTime.UtcNow
+                };
+                
+                var currentNode = new NodeViewModel(currentNodeData);
+                System.Windows.Application.Current.Dispatcher.Invoke(() => {
+                    Nodes.Add(currentNode);
+                });
+                
+                // Just add one node with a running task
+                var processNode = new ComputerNode
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Name = "PC-1",
+                    IpAddress = "192.168.1.101",
+                    IsAvailable = true,
+                    LastHeartbeat = DateTime.UtcNow
+                };
+                
+                var processNodeVM = new NodeViewModel(processNode);
+                
+                var task = new BatchTask
+                {
+                    Id = 1,
+                    AssignedNodeId = processNode.Id,
+                    Type = TaskType.FileProcessing,
+                    Status = BatchTaskStatus.Running,
+                    StartedAt = DateTime.Now.AddMinutes(-5)
+                };
+                
+                System.Windows.Application.Current.Dispatcher.Invoke(() => {
+                    Nodes.Add(processNodeVM);
+                    processNodeVM.SetActiveTask(task, 0.45);
+                });
+                
+                // Add an available node
+                var availableNode = new ComputerNode
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Name = "PC-2",
+                    IpAddress = "192.168.1.102",
+                    IsAvailable = true,
+                    LastHeartbeat = DateTime.UtcNow
+                };
+                
+                System.Windows.Application.Current.Dispatcher.Invoke(() => {
+                    Nodes.Add(new NodeViewModel(availableNode));
+                });
+                
+                // Add an offline node
+                var offlineNode = new ComputerNode
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    Name = "PC-3",
+                    IpAddress = "192.168.1.103",
+                    IsAvailable = false,
+                    LastHeartbeat = DateTime.UtcNow.AddMinutes(-10) // Old heartbeat
+                };
+                
+                System.Windows.Application.Current.Dispatcher.Invoke(() => {
+                    Nodes.Add(new NodeViewModel(offlineNode));
+                    
+                    // Sort all nodes by status
+                    SortNodesByStatus();
+                });
+            }
+            catch (Exception ex)
+            {
+                // Log exception but don't crash
+                System.Diagnostics.Debug.WriteLine($"Error in AddSampleNodesAsync: {ex.Message}");
             }
         }
 
@@ -2394,122 +2657,6 @@ namespace VCDevTool.Client.ViewModels
                 Debug.WriteLine($"Error shutting down API service: {ex.Message}");
             }
         }
-        
-        private async Task AddSampleNodesAsync()
-        {
-            try {
-                // Clear existing nodes for testing purposes to avoid duplicates
-                System.Windows.Application.Current.Dispatcher.Invoke(() => {
-                    Nodes.Clear();
-                });
-                
-                // Add the current node (user's own PC)
-                var currentNodeData = new ComputerNode
-                {
-                    Id = _nodeService.CurrentNode.Id,
-                    Name = _nodeService.CurrentNode.Name,
-                    IpAddress = _nodeService.CurrentNode.IpAddress,
-                    IsAvailable = _isActivated, // Set availability based on toggle
-                    LastHeartbeat = DateTime.UtcNow
-                };
-                
-                var currentNode = new NodeViewModel(currentNodeData);
-                System.Windows.Application.Current.Dispatcher.Invoke(() => {
-                    Nodes.Add(currentNode);
-                });
-                
-                // Just add one node with a running task
-                var processNode = new ComputerNode
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "PC-1",
-                    IpAddress = "192.168.1.101",
-                    IsAvailable = true,
-                    LastHeartbeat = DateTime.UtcNow
-                };
-                
-                var processNodeVM = new NodeViewModel(processNode);
-                
-                var task = new BatchTask
-                {
-                    Id = 1,
-                    AssignedNodeId = processNode.Id,
-                    Type = TaskType.FileProcessing,
-                    Status = BatchTaskStatus.Running,
-                    StartedAt = DateTime.Now.AddMinutes(-5)
-                };
-                
-                System.Windows.Application.Current.Dispatcher.Invoke(() => {
-                    Nodes.Add(processNodeVM);
-                    processNodeVM.SetActiveTask(task, 0.45);
-                });
-                
-                // Add an available node
-                var availableNode = new ComputerNode
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "PC-2",
-                    IpAddress = "192.168.1.102",
-                    IsAvailable = true,
-                    LastHeartbeat = DateTime.UtcNow
-                };
-                
-                System.Windows.Application.Current.Dispatcher.Invoke(() => {
-                    Nodes.Add(new NodeViewModel(availableNode));
-                });
-                
-                // Add an offline node
-                var offlineNode = new ComputerNode
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    Name = "PC-3",
-                    IpAddress = "192.168.1.103",
-                    IsAvailable = false,
-                    LastHeartbeat = DateTime.UtcNow.AddMinutes(-10) // Old heartbeat
-                };
-                
-                System.Windows.Application.Current.Dispatcher.Invoke(() => {
-                    Nodes.Add(new NodeViewModel(offlineNode));
-                    
-                    // Sort all nodes by status
-                    SortNodesByStatus();
-                });
-            }
-            catch (Exception ex)
-            {
-                // Log exception but don't crash
-                System.Diagnostics.Debug.WriteLine($"Error in AddSampleNodesAsync: {ex.Message}");
-            }
-        }
-
-        public bool IsTaskDetailViewVisible
-        {
-            get => _isTaskDetailViewVisible;
-            set
-            {
-                if (_isTaskDetailViewVisible != value)
-                {
-                    _isTaskDetailViewVisible = value;
-                    OnPropertyChanged(nameof(IsTaskDetailViewVisible));
-                }
-            }
-        }
-
-        public TaskViewModel? SelectedTask
-        {
-            get => _selectedTask;
-            set
-            {
-                if (_selectedTask != value)
-                {
-                    _selectedTask = value;
-                    OnPropertyChanged(nameof(SelectedTask));
-                }
-            }
-        }
-
-        public ICommand ShowTaskDetailsCommand { get; }
-        public ICommand CloseTaskDetailsCommand { get; }
     }
 
     public class RelayCommand : ICommand

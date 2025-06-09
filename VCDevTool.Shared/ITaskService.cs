@@ -10,7 +10,7 @@ namespace VCDevTool.Shared
         Task<List<BatchTask>> GetAllTasksAsync();
         Task<BatchTask> GetTaskByIdAsync(int taskId);
         Task<BatchTask> CreateTaskAsync(BatchTask task);
-        Task<BatchTask> UpdateTaskStatusAsync(int taskId, BatchTaskStatus status, string? resultMessage = null);
+        Task<BatchTask> UpdateTaskStatusAsync(int taskId, BatchTaskStatus status, string? resultMessage = null, byte[]? rowVersion = null);
         Task<bool> AssignTaskToNodeAsync(int taskId, string nodeId);
         
         // Node Management
@@ -23,5 +23,15 @@ namespace VCDevTool.Shared
         Task<bool> TryAcquireFileLockAsync(string filePath, string nodeId);
         Task<bool> ReleaseFileLockAsync(string filePath, string nodeId);
         Task<List<FileLock>> GetActiveLocksAsync();
+        Task<bool> ResetAllFileLocksAsync();
+
+        // Task Folder Progress Management
+        Task<List<TaskFolderProgress>> GetTaskFolderProgressAsync(int taskId);
+        Task<TaskFolderProgress> CreateTaskFolderProgressAsync(TaskFolderProgress folderProgress);
+        Task<TaskFolderProgress> UpdateTaskFolderProgressAsync(int id, TaskFolderStatus status, string? nodeId = null, string? nodeName = null, double progress = 0.0, string? errorMessage = null, string? outputPath = null);
+        Task<bool> DeleteTaskFolderProgressAsync(int taskId);
+        
+        // Task Completion Management
+        Task<bool> CheckAndCompleteVolumeCompressionTaskAsync(int taskId);
     }
 } 

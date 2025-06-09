@@ -31,7 +31,14 @@ namespace VCDevTool.API.Migrations
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
                     b.Property<string>("AssignedNodeId")
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("AssignedNodeIds")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)")
+                        .HasColumnName("AssignedNodeIdsJson");
 
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("datetime2");
@@ -41,13 +48,21 @@ namespace VCDevTool.API.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<string>("Parameters")
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
 
                     b.Property<string>("ResultMessage")
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("datetime2");
@@ -60,36 +75,128 @@ namespace VCDevTool.API.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AssignedNodeId")
+                        .HasDatabaseName("IX_Tasks_AssignedNodeId");
+
+                    b.HasIndex("CompletedAt")
+                        .HasDatabaseName("IX_Tasks_CompletedAt");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_Tasks_CreatedAt");
+
+                    b.HasIndex("StartedAt")
+                        .HasDatabaseName("IX_Tasks_StartedAt");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("IX_Tasks_Status");
+
+                    b.HasIndex("Type")
+                        .HasDatabaseName("IX_Tasks_Type");
+
+                    b.HasIndex("AssignedNodeId", "Status")
+                        .HasDatabaseName("IX_Tasks_AssignedNodeId_Status");
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .HasDatabaseName("IX_Tasks_Status_CreatedAt");
+
                     b.ToTable("Tasks");
                 });
 
             modelBuilder.Entity("VCDevTool.Shared.ComputerNode", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("ActiveDirectoryName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("AdGroups")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<string>("DistinguishedName")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("DnsHostName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<string>("DomainController")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<string>("HardwareFingerprint")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
 
                     b.Property<string>("IpAddress")
                         .IsRequired()
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(45)
+                        .HasColumnType("nvarchar(45)");
+
+                    b.Property<bool>("IsAdEnabled")
+                        .HasColumnType("bit");
 
                     b.Property<bool>("IsAvailable")
                         .HasColumnType("bit");
+
+                    b.Property<DateTime>("LastAdLogon")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("LastAdSync")
+                        .HasColumnType("datetime2");
 
                     b.Property<DateTime>("LastHeartbeat")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("OperatingSystem")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("OrganizationalUnit")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("ServicePrincipalName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ActiveDirectoryName")
+                        .HasDatabaseName("IX_Nodes_ADName");
+
+                    b.HasIndex("DistinguishedName")
+                        .HasDatabaseName("IX_Nodes_DistinguishedName");
+
                     b.HasIndex("IpAddress")
                         .IsUnique();
+
+                    b.HasIndex("Name")
+                        .HasDatabaseName("IX_Nodes_Name");
+
+                    b.HasIndex("IsAdEnabled", "LastAdSync")
+                        .HasDatabaseName("IX_Nodes_ADEnabled_LastSync");
+
+                    b.HasIndex("IsAvailable", "LastHeartbeat")
+                        .HasDatabaseName("IX_Nodes_Availability_Heartbeat");
 
                     b.ToTable("Nodes");
                 });
@@ -107,21 +214,113 @@ namespace VCDevTool.API.Migrations
 
                     b.Property<string>("FilePath")
                         .IsRequired()
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.Property<DateTime>("LastUpdatedAt")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("LockingNodeId")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("AcquiredAt")
+                        .HasDatabaseName("IX_FileLocks_AcquiredAt");
 
                     b.HasIndex("FilePath")
                         .IsUnique();
 
+                    b.HasIndex("LockingNodeId")
+                        .HasDatabaseName("IX_FileLocks_LockingNodeId");
+
+                    b.HasIndex("LastUpdatedAt", "LockingNodeId")
+                        .HasDatabaseName("IX_FileLocks_LastUpdated_NodeId");
+
                     b.ToTable("FileLocks");
+                });
+
+            modelBuilder.Entity("VCDevTool.Shared.TaskFolderProgress", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AssignedNodeId")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("AssignedNodeName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasMaxLength(2000)
+                        .HasColumnType("nvarchar(2000)");
+
+                    b.Property<string>("FolderName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<string>("FolderPath")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("OutputPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<double>("Progress")
+                        .HasColumnType("float");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<int>("TaskId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_TaskFolderProgress_CreatedAt");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("IX_TaskFolderProgress_Status");
+
+                    b.HasIndex("TaskId")
+                        .HasDatabaseName("IX_TaskFolderProgress_TaskId");
+
+                    b.HasIndex("Status", "AssignedNodeId")
+                        .HasDatabaseName("IX_TaskFolderProgress_Status_NodeId");
+
+                    b.HasIndex("TaskId", "FolderPath")
+                        .IsUnique();
+
+                    b.ToTable("TaskFolderProgress");
+                });
+
+            modelBuilder.Entity("VCDevTool.Shared.TaskFolderProgress", b =>
+                {
+                    b.HasOne("VCDevTool.Shared.BatchTask", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

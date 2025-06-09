@@ -7,10 +7,12 @@ using VCDevTool.Shared;
 using System.IO;
 using System.Text.Json;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace VCDevTool.Client.Services
 {
-    public class NodeService
+    public class NodeService : INodeService
     {
         private ApiClient _apiClient;
         private ComputerNode _currentNode;
@@ -18,19 +20,13 @@ namespace VCDevTool.Client.Services
         private const int HeartbeatIntervalMs = 30000; // 30 seconds
         private int _heartbeatFailures = 0;
         private const int MaxHeartbeatFailures = 3;
+        private readonly IAuthenticationService _authService;
 
-        public NodeService(ApiClient apiClient)
+        public NodeService(ApiClient apiClient, IAuthenticationService? authService = null)
         {
             _apiClient = apiClient;
-            
-            // Use the robust device identifier to create a unique, stable node ID
-            _currentNode = new ComputerNode
-            {
-                Id = DeviceIdentifier.GetDeviceId(),
-                Name = DeviceIdentifier.GetDeviceName(),
-                IpAddress = GetLocalIpAddress(),
-                HardwareFingerprint = GenerateHardwareFingerprint()
-            };
+            _authService = authService ?? new AuthenticationService(apiClient.GetBaseUrl());
+            _currentNode = CreateCurrentNode();
         }
         
         public ComputerNode CurrentNode => _currentNode;
@@ -38,6 +34,7 @@ namespace VCDevTool.Client.Services
         public void SetNodeAvailability(bool isAvailable)
         {
             _currentNode.IsAvailable = isAvailable;
+            _currentNode.LastHeartbeat = DateTime.UtcNow;
             
             // Immediately propagate availability status to server
             _ = Task.Run(async () =>
@@ -67,28 +64,49 @@ namespace VCDevTool.Client.Services
             }
         }
         
-        public async Task<bool> RegisterNodeAsync()
+        public async Task<ComputerNode> RegisterNodeAsync()
         {
             try
             {
-                var registeredNode = await _apiClient.RegisterNodeAsync(_currentNode);
-                if (registeredNode != null)
+                System.Diagnostics.Debug.WriteLine($"Starting node registration for: {_currentNode.Id} - {_currentNode.Name}");
+                
+                // First try to authenticate using the authentication service
+                bool authenticated = false;
+                
+                // Try to register first (for new nodes)
+                try
                 {
-                    // Update local node info with any server-side updates
-                    _currentNode.Name = registeredNode.Name;
-                    _currentNode.IpAddress = registeredNode.IpAddress;
-                    _currentNode.IsAvailable = registeredNode.IsAvailable;
-                    _currentNode.LastHeartbeat = registeredNode.LastHeartbeat;
-                    // Start sending heartbeats to keep node alive
-                    StartHeartbeat();
-                    return true;
+                    authenticated = await _authService.RegisterAsync(_currentNode);
+                    System.Diagnostics.Debug.WriteLine($"Registration result: {authenticated}");
                 }
-                return false;
+                catch (Exception regEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Registration failed: {regEx.Message}");
+                    // If registration fails, try login (node might already exist)
+                    try
+                    {
+                        authenticated = await _authService.LoginAsync(_currentNode.Id, _currentNode.HardwareFingerprint ?? "");
+                        System.Diagnostics.Debug.WriteLine($"Login result: {authenticated}");
+                    }
+                    catch (Exception loginEx)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Login also failed: {loginEx.Message}");
+                        throw new Exception($"Both registration and login failed. Registration: {regEx.Message}, Login: {loginEx.Message}");
+                    }
+                }
+
+                if (!authenticated)
+                {
+                    throw new UnauthorizedAccessException("Failed to authenticate with the API server");
+                }
+
+                System.Diagnostics.Debug.WriteLine($"Node successfully authenticated: {_currentNode.Id}");
+                return _currentNode;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error registering node: {ex.Message}");
-                return false;
+                System.Diagnostics.Debug.WriteLine($"Error in RegisterNodeAsync: {ex.Message}");
+                throw new Exception($"Failed to register node: {ex.Message}", ex);
             }
         }
         
@@ -182,90 +200,97 @@ namespace VCDevTool.Client.Services
 
         public void UpdateApiClient(ApiClient apiClient)
         {
-            if (apiClient == null)
-                throw new ArgumentNullException(nameof(apiClient));
-            
             _apiClient = apiClient;
-            
-            // Restart heartbeat and re-register with the new API client if active
-            if (_heartbeatTimer != null)
-            {
-                StopHeartbeat();
-                // Attempt to re-register and start heartbeats under new API client
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await RegisterNodeAsync();
-                    }
-                    catch { /* swallow to avoid unobserved */ }
-                });
-            }
+            // Update the authentication service with the new API client base URL
+            var newAuthService = new AuthenticationService(apiClient.GetBaseUrl());
+            // Copy any existing authentication state if needed
         }
 
-        private string GetLocalIpAddress()
+        private ComputerNode CreateCurrentNode()
         {
-            var host = Dns.GetHostEntry(Dns.GetHostName());
-            foreach (var ip in host.AddressList)
+            var nodeId = GenerateNodeId();
+            var ipAddress = GetLocalIPAddress();
+            var hardwareFingerprint = GenerateHardwareFingerprint();
+            
+            return new ComputerNode
             {
-                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-                {
-                    return ip.ToString();
-                }
-            }
-            return "127.0.0.1";
+                Id = nodeId,
+                Name = Environment.MachineName,
+                IpAddress = ipAddress,
+                HardwareFingerprint = hardwareFingerprint,
+                IsAvailable = true,
+                LastHeartbeat = DateTime.UtcNow
+            };
         }
 
-        /// <summary>
-        /// Generates additional hardware fingerprint information beyond the basic device ID
-        /// </summary>
+        private string GenerateNodeId()
+        {
+            // Generate a consistent node ID based on machine name and MAC address
+            var macAddress = GetMacAddress();
+            var machineInfo = $"{Environment.MachineName}-{macAddress}";
+            
+            using (var sha256 = SHA256.Create())
+            {
+                var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(machineInfo));
+                return Convert.ToHexString(hash)[..16]; // Use first 16 characters
+            }
+        }
+
+        private string GetMacAddress()
+        {
+            try
+            {
+                var networkInterface = NetworkInterface.GetAllNetworkInterfaces()
+                    .FirstOrDefault(ni => ni.OperationalStatus == OperationalStatus.Up &&
+                                         ni.NetworkInterfaceType != NetworkInterfaceType.Loopback);
+                
+                return networkInterface?.GetPhysicalAddress().ToString() ?? "UNKNOWN";
+            }
+            catch
+            {
+                return "UNKNOWN";
+            }
+        }
+
         private string GenerateHardwareFingerprint()
         {
-            // Combine multiple hardware details to create a comprehensive fingerprint
-            // This is in addition to the DeviceId which is already hardware-based
             try
             {
-                var macAddress = GetPrimaryMacAddress();
-                var totalMemory = GetTotalPhysicalMemory();
-                var fingerprint = $"{macAddress}|{totalMemory}";
-                return Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(fingerprint));
-            }
-            catch
-            {
-                return string.Empty;
-            }
-        }
-
-        private string GetPrimaryMacAddress()
-        {
-            try
-            {
-                // Find the most suitable network interface
-                var nic = NetworkInterface.GetAllNetworkInterfaces()
-                    .FirstOrDefault(n => 
-                        n.OperationalStatus == OperationalStatus.Up && 
-                        n.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
-                        n.GetPhysicalAddress().ToString().Length > 0);
-
-                if (nic != null)
+                // Combine multiple hardware identifiers for a more unique fingerprint
+                var macAddress = GetMacAddress();
+                var processorId = Environment.ProcessorCount.ToString();
+                var userName = Environment.UserName;
+                var osVersion = Environment.OSVersion.ToString();
+                
+                var combined = $"{macAddress}-{processorId}-{userName}-{osVersion}";
+                
+                using (var sha256 = SHA256.Create())
                 {
-                    return nic.GetPhysicalAddress().ToString();
+                    var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(combined));
+                    return Convert.ToHexString(hash)[..24]; // Use first 24 characters
                 }
             }
-            catch {}
-
-            return "UNKNOWN";
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error generating hardware fingerprint: {ex.Message}");
+                return $"FALLBACK-{Environment.MachineName}-{DateTime.UtcNow.Ticks}";
+            }
         }
 
-        private string GetTotalPhysicalMemory()
+        private string GetLocalIPAddress()
         {
             try
             {
-                return Environment.WorkingSet.ToString();
+                var host = Dns.GetHostEntry(Dns.GetHostName());
+                var localIP = host.AddressList
+                    .FirstOrDefault(ip => ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && 
+                                         !IPAddress.IsLoopback(ip));
+                
+                return localIP?.ToString() ?? $"127.0.0.{Random.Shared.Next(1, 255)}";
             }
             catch
             {
-                return "0";
+                return $"127.0.0.{Random.Shared.Next(1, 255)}";
             }
         }
     }

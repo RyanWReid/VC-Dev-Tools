@@ -8,12 +8,13 @@ using System.Windows;
 using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics;
+using System.Collections.Concurrent;
 
 namespace VCDevTool.Client.Services
 {
     public class TaskExecutionService : IDisposable
     {
-        private ApiClient _apiClient;
+        private IApiClient _apiClient;
         private readonly NodeService _nodeService;
         private readonly SlackNotificationService? _slackService;
         private readonly HashSet<int> _processedTaskIds;
@@ -22,8 +23,11 @@ namespace VCDevTool.Client.Services
         private bool _isExecutingTask;
         private bool _isDisposed;
         private CancellationTokenSource? _cancellationTokenSource;
+        private readonly ConcurrentDictionary<string, Process> _runningProcesses = new();
+        private readonly HashSet<string> _heldLocks = new();
+        private readonly object _lockSetSync = new();
 
-        public TaskExecutionService(ApiClient apiClient, NodeService nodeService)
+        public TaskExecutionService(IApiClient apiClient, NodeService nodeService)
         {
             _apiClient = apiClient ?? throw new ArgumentNullException(nameof(apiClient));
             _nodeService = nodeService ?? throw new ArgumentNullException(nameof(nodeService));
@@ -32,7 +36,13 @@ namespace VCDevTool.Client.Services
             _cancellationTokenSource = new CancellationTokenSource();
         }
 
-        public void UpdateApiClient(ApiClient apiClient)
+        // Overload for backward compatibility
+        public TaskExecutionService(ApiClient apiClient, NodeService nodeService) 
+            : this((IApiClient)apiClient, nodeService)
+        {
+        }
+
+        public void UpdateApiClient(IApiClient apiClient)
         {
             if (apiClient == null)
                 throw new ArgumentNullException(nameof(apiClient));
@@ -43,6 +53,18 @@ namespace VCDevTool.Client.Services
             _apiClient = apiClient;
             
             RestartTaskPolling();
+        }
+
+        // Overload for backward compatibility
+        public void UpdateApiClient(ApiClient apiClient)
+        {
+            UpdateApiClient((IApiClient)apiClient);
+        }
+
+        public void ClearProcessedTaskIds()
+        {
+            _processedTaskIds.Clear();
+            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Manually cleared processed task cache");
         }
 
         public void StartTaskPolling()
@@ -63,6 +85,7 @@ namespace VCDevTool.Client.Services
         {
             StopTaskPolling();
             _processedTaskIds.Clear();
+            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Task polling restarted - cleared processed task cache");
             _taskPollingTimer = new System.Threading.Timer(PollForTasks, null, 0, PollingIntervalMs);
         }
 
@@ -92,26 +115,102 @@ namespace VCDevTool.Client.Services
         {
             var tasks = await _apiClient.GetTasksAsync();
             var tasksForThisNode = tasks.Where(t => 
-                t.AssignedNodeId == _nodeService.CurrentNode.Id &&
-                !_processedTaskIds.Contains(t.Id)).ToList();
+                    IsTaskAssignedToNode(t, _nodeService.CurrentNode.Id) &&
+                    !_processedTaskIds.Contains(t.Id)).ToList();
             
-            var pendingTasks = tasksForThisNode.Where(t => t.Status == BatchTaskStatus.Pending).ToList();
+            // Debug: Show all running tasks and their assignments
+            var runningTasks = tasks.Where(t => t.Status == BatchTaskStatus.Running).ToList();
+            if (runningTasks.Any())
+            {
+                foreach (var runningTask in runningTasks)
+                {
+                    var assignedNodes = GetAssignedNodeIds(runningTask);
+                    var isAssignedToThisNode = IsTaskAssignedToNode(runningTask, _nodeService.CurrentNode.Id);
+                    UpdateDebugOutput($"[DEBUG] Task {runningTask.Id} ({runningTask.Type}) - Assigned to: [{string.Join(", ", assignedNodes)}] - This node ({_nodeService.CurrentNode.Name}) assigned: {isAssignedToThisNode}");
+                }
+            }
+            
+            // Modified filtering logic: Allow VolumeCompression tasks when Running, maintain existing behavior for other types
+            var pendingTasks = tasksForThisNode.Where(t => 
+                t.Status == BatchTaskStatus.Pending || 
+                (t.Type == TaskType.VolumeCompression && t.Status == BatchTaskStatus.Running)
+            ).ToList();
+            
+            if (pendingTasks.Any())
+            {
+                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Found {pendingTasks.Count} tasks to process (pending + running VolumeCompression tasks)");
+            }
             
             foreach (var task in pendingTasks)
             {
-                _processedTaskIds.Add(task.Id);
+                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Starting execution of task {task.Id} ({task.Type}) with status {task.Status}");
+                _processedTaskIds.Add(task.Id); // Add to processed set only when we start executing
                 await ExecuteTaskAsync(task);
             }
+        }
+
+        /// <summary>
+        /// Gets the list of assigned node IDs for a task
+        /// </summary>
+        private List<string> GetAssignedNodeIds(BatchTask task)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(task.AssignedNodeIds))
+                {
+                    return JsonSerializer.Deserialize<List<string>>(task.AssignedNodeIds) ?? new List<string>();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error parsing AssignedNodeIds for task {task.Id}: {ex.Message}");
+            }
+            
+            // Fallback to single assigned node for backward compatibility
+            if (!string.IsNullOrEmpty(task.AssignedNodeId))
+            {
+                return new List<string> { task.AssignedNodeId };
+            }
+            
+            return new List<string>();
+        }
+
+        /// <summary>
+        /// Checks if a task is assigned to the specified node by looking in both AssignedNodeId and AssignedNodeIds
+        /// </summary>
+        private bool IsTaskAssignedToNode(BatchTask task, string nodeId)
+        {
+            // Check single node assignment (backward compatibility)
+            if (task.AssignedNodeId == nodeId)
+            {
+                return true;
+            }
+            
+            // Check multiple node assignment
+            try
+            {
+                if (!string.IsNullOrEmpty(task.AssignedNodeIds))
+                {
+                    var assignedNodeIds = JsonSerializer.Deserialize<List<string>>(task.AssignedNodeIds);
+                    return assignedNodeIds?.Contains(nodeId) == true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Error parsing AssignedNodeIds for task {task.Id}: {ex.Message}");
+            }
+            
+            return false;
         }
 
         private async Task HandleStuckTasksAsync()
         {
             var tasks = await _apiClient.GetTasksAsync();
             var stuckTasks = tasks.Where(t => 
-                t.Status == BatchTaskStatus.Running && 
-                _processedTaskIds.Contains(t.Id) &&
-                t.StartedAt.HasValue && 
-                DateTime.UtcNow - t.StartedAt.Value > TimeSpan.FromSeconds(30)).ToList();
+                    t.Status == BatchTaskStatus.Running && 
+                    _processedTaskIds.Contains(t.Id) &&
+                    t.StartedAt.HasValue && 
+                    DateTime.UtcNow - t.StartedAt.Value > TimeSpan.FromSeconds(30)).ToList();
             
             foreach (var task in stuckTasks)
             {
@@ -126,14 +225,14 @@ namespace VCDevTool.Client.Services
         {
             var tasks = await _apiClient.GetTasksAsync();
             var completedTaskIds = tasks
-                .Where(t => (t.Status == BatchTaskStatus.Completed || t.Status == BatchTaskStatus.Failed) && 
-                       _processedTaskIds.Contains(t.Id))
-                .Select(t => t.Id)
-                .ToList();
+                    .Where(t => (t.Status == BatchTaskStatus.Completed || t.Status == BatchTaskStatus.Failed) && 
+                           _processedTaskIds.Contains(t.Id))
+                    .Select(t => t.Id)
+                    .ToList();
             
             foreach (var id in completedTaskIds)
-            {
-                _processedTaskIds.Remove(id);
+                {
+                    _processedTaskIds.Remove(id);
             }
         }
 
@@ -144,26 +243,26 @@ namespace VCDevTool.Client.Services
                 task.StartedAt = DateTime.UtcNow;
                 await _apiClient.UpdateTaskStatusAsync(task.Id, BatchTaskStatus.Running);
 
-                switch (task.Type)
-                {
-                    case TaskType.TestMessage:
+                    switch (task.Type)
+                    {
+                        case TaskType.TestMessage:
                         await ExecuteTestMessageTask(task);
-                        break;
-                    case TaskType.RenderThumbnails:
+                            break;
+                        case TaskType.RenderThumbnails:
                         await ExecuteRenderThumbnailTask(task);
-                        break;
-                    case TaskType.PackageTask:
+                            break;
+                        case TaskType.PackageTask:
                         await ExecutePackageTask(task);
-                        break;
-                    case TaskType.VolumeCompression:
+                            break;
+                        case TaskType.VolumeCompression:
                         await ExecuteVolumeCompressionTask(task);
-                        break;
-                    case TaskType.RealityCapture:
+                            break;
+                        case TaskType.RealityCapture:
                         await ExecuteRealityCaptureTask(task);
-                        break;
-                    default:
+                            break;
+                        default:
                         await _apiClient.UpdateTaskStatusAsync(task.Id, BatchTaskStatus.Failed, "Unsupported task type");
-                        break;
+                            break;
                 }
             }
             catch (Exception ex)
@@ -217,12 +316,89 @@ namespace VCDevTool.Client.Services
         {
             try
             {
+                UpdateDebugOutput($"Task abort requested for node {nodeId}");
+                
+                // Kill any running external process for this node
+                if (_runningProcesses.TryRemove(nodeId, out var process))
+                {
+                    try
+                    {
+                        if (!process.HasExited)
+                        {
+                            process.Kill(true);
+                            UpdateDebugOutput($"Process for node {nodeId} was killed by abort.");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateDebugOutput($"Error killing process for node {nodeId}: {ex.Message}");
+                    }
+                    finally
+                    {
+                        process.Dispose();
+                    }
+                }
+
                 // Cancel the current operation
                 if (_cancellationTokenSource != null)
                 {
                     _cancellationTokenSource.Cancel();
                     _cancellationTokenSource.Dispose();
                     _cancellationTokenSource = new CancellationTokenSource();
+                }
+
+                // Release all held locks for this node
+                List<string> locksToRelease;
+                lock (_lockSetSync)
+                {
+                    locksToRelease = _heldLocks.ToList();
+                    _heldLocks.Clear();
+                }
+                
+                foreach (var normalizedFolderPath in locksToRelease)
+                {
+                    try
+                    {
+                        string folderLockPath = PathUtils.GetFolderLockKey(normalizedFolderPath);
+                        await _apiClient.ReleaseFileLockAsync(folderLockPath, nodeId);
+                        UpdateDebugOutput($"Released lock for folder: {normalizedFolderPath} on abort.");
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateDebugOutput($"Error releasing lock for folder {normalizedFolderPath} on abort: {ex.Message}");
+                    }
+                }
+                
+                // Also clear any lingering locks in the database for this node
+                try
+                {
+                    var locks = await _apiClient.GetActiveLocksAsync();
+                    var nodeLocks = locks.Where(l => l.LockingNodeId == nodeId && l.FilePath.StartsWith("folder_lock:")).ToList();
+                    
+                    if (nodeLocks.Any())
+                    {
+                        UpdateDebugOutput($"Found {nodeLocks.Count} additional folder locks to clean up for node {nodeId}");
+                        
+                        foreach (var lockItem in nodeLocks)
+                        {
+                            try
+                            {
+                                string folderPath = lockItem.FilePath.Substring(12); // Remove "folder_lock:" prefix
+                                string normalizedFolderPath = PathUtils.NormalizePath(folderPath);
+                                string folderLockPath = PathUtils.GetFolderLockKey(normalizedFolderPath);
+                                await _apiClient.ReleaseFileLockAsync(folderLockPath, nodeId);
+                                UpdateDebugOutput($"Released leftover lock: {folderPath}");
+                            }
+                            catch (Exception ex)
+                            {
+                                UpdateDebugOutput($"Error releasing leftover lock {lockItem.FilePath}: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateDebugOutput($"Error cleaning up leftover locks: {ex.Message}");
                 }
                 
                 // Get tasks for this node
@@ -281,18 +457,18 @@ namespace VCDevTool.Client.Services
                 
                 // Get the main view model to update the UI
                 System.Windows.Application.Current.Dispatcher.Invoke(() => 
-                {
-                    var mainWindow = System.Windows.Application.Current.MainWindow;
-                    if (mainWindow?.DataContext is ViewModels.MainViewModel mainViewModel)
                     {
-                        var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
-                        if (node != null)
-                        {
-                            // Set initial progress at 0%
-                            node.SetActiveTask(task, 0);
+                            var mainWindow = System.Windows.Application.Current.MainWindow;
+                            if (mainWindow?.DataContext is ViewModels.MainViewModel mainViewModel)
+                            {
+                                var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
+                                if (node != null)
+                                {
+                                    // Set initial progress at 0%
+                                    node.SetActiveTask(task, 0);
+                                }
                         }
-                    }
-                });
+                    });
                 
                 // Simulate progress - delay for a total of 3 seconds with incremental progress
                 for (int i = 1; i <= 10; i++)
@@ -303,15 +479,15 @@ namespace VCDevTool.Client.Services
                     
                     // Update the progress on the UI
                     System.Windows.Application.Current.Dispatcher.Invoke(() => 
-                    {
-                        var mainWindow = System.Windows.Application.Current.MainWindow;
-                        if (mainWindow?.DataContext is ViewModels.MainViewModel mainViewModel)
                         {
-                            var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
-                            if (node != null)
-                            {
-                                node.SetActiveTask(task, progress);
-                            }
+                                var mainWindow = System.Windows.Application.Current.MainWindow;
+                                if (mainWindow?.DataContext is ViewModels.MainViewModel mainViewModel)
+                                {
+                                    var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
+                                    if (node != null)
+                                    {
+                                        node.SetActiveTask(task, progress);
+                                    }
                         }
                     });
                 }
@@ -329,7 +505,7 @@ namespace VCDevTool.Client.Services
                 );
                 
                 // After a small delay, clear the task from the node UI
-                await Task.Delay(500); // Half-second delay to show 100% completion
+                await Task.Delay(500);
                 ClearTaskFromUI(task);
             }
             catch (Exception ex)
@@ -350,7 +526,7 @@ namespace VCDevTool.Client.Services
                 }
             }
         }
-        
+
         private async Task<bool> DisplayMessageFromTask(BatchTask task)
         {
             // Parse parameters to get the message
@@ -367,16 +543,42 @@ namespace VCDevTool.Client.Services
                             senderName = sender;
                         }
                         
-                        // Use the dispatcher to show message box on UI thread
-                        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                        // Add connectivity test information
+                        string connectionStatus = "Connected";
+                        string responseTime = "N/A";
+                        
+                        try
                         {
-                            System.Windows.MessageBox.Show(
-                                $"Message from {senderName}:\n\n{messageText}", 
-                                "New Message Received", 
-                                System.Windows.MessageBoxButton.OK, 
-                                System.Windows.MessageBoxImage.Information
-                            );
-                        });
+                            // Test API connection with timing
+                            var stopwatch = new Stopwatch();
+                            stopwatch.Start();
+                            bool isConnected = await _apiClient.TestConnectionAsync();
+                            stopwatch.Stop();
+                            
+                            connectionStatus = isConnected ? "Connected" : "Disconnected";
+                            responseTime = $"{stopwatch.ElapsedMilliseconds}ms";
+                        }
+                        catch (Exception ex)
+                        {
+                            connectionStatus = $"Error: {ex.Message}";
+                        }
+                        
+                        // Add connection info to the message
+                        string fullMessage = $"Message from {senderName}:\n\n{messageText}\n\n" +
+                                            $"Connection Status: {connectionStatus}\n" +
+                                            $"Response Time: {responseTime}\n" +
+                                            $"Node: {_nodeService.CurrentNode.Name} ({_nodeService.CurrentNode.IpAddress})";
+                        
+                        // Use the dispatcher to show message box on UI thread
+                            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                            {
+                                    System.Windows.MessageBox.Show(
+                                        fullMessage, 
+                                        "New Message Received", 
+                                        System.Windows.MessageBoxButton.OK, 
+                                        System.Windows.MessageBoxImage.Information
+                                    );
+                            });
                         
                         return true;
                     }
@@ -422,14 +624,14 @@ namespace VCDevTool.Client.Services
                 {
                     // Show message box to user
                     System.Windows.Application.Current.Dispatcher.Invoke(() =>
-                    {
-                        System.Windows.MessageBox.Show(
-                            "Could not find Cinema 4D 2025. Please install it or try again.",
-                            "Cinema 4D Not Found",
-                            System.Windows.MessageBoxButton.OK,
-                            System.Windows.MessageBoxImage.Warning
-                        );
-                    });
+                        {
+                                System.Windows.MessageBox.Show(
+                                    "Could not find Cinema 4D 2025. Please install it or try again.",
+                                    "Cinema 4D Not Found",
+                                    System.Windows.MessageBoxButton.OK,
+                                    System.Windows.MessageBoxImage.Warning
+                                );
+                        });
 
                     await _apiClient.UpdateTaskStatusAsync(
                         task.Id,
@@ -531,7 +733,13 @@ namespace VCDevTool.Client.Services
                 var mainWindow = System.Windows.Application.Current.MainWindow;
                 if (mainWindow?.DataContext is ViewModels.MainViewModel mainViewModel)
                 {
-                    var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
+                    // For VolumeCompression tasks that support concurrent processing, use the current node
+                    // For other tasks, use the task's assigned node ID
+                    string targetNodeId = (task.Type == TaskType.VolumeCompression) 
+                        ? _nodeService.CurrentNode.Id 
+                        : task.AssignedNodeId;
+                        
+                    var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == targetNodeId);
                     if (node != null)
                     {
                         node.SetActiveTask(task, progress);
@@ -549,7 +757,13 @@ namespace VCDevTool.Client.Services
             {
                 if (System.Windows.Application.Current.MainWindow.DataContext is ViewModels.MainViewModel viewModel)
                 {
-                    var node = viewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
+                    // For VolumeCompression tasks that support concurrent processing, use the current node
+                    // For other tasks, use the task's assigned node ID
+                    string targetNodeId = (task.Type == TaskType.VolumeCompression) 
+                        ? _nodeService.CurrentNode.Id 
+                        : task.AssignedNodeId;
+                        
+                    var node = viewModel.Nodes.FirstOrDefault(n => n.Id == targetNodeId);
                     if (node != null)
                     {
                         node.UpdateTaskName(message);
@@ -560,28 +774,130 @@ namespace VCDevTool.Client.Services
 
         private void UpdateDebugOutput(string output)
         {
-            System.Windows.Application.Current.Dispatcher.Invoke(() =>
+            try
             {
-                if (System.Windows.Application.Current.MainWindow.DataContext is ViewModels.MainViewModel viewModel)
+                System.Windows.Application.Current.Dispatcher.Invoke(() =>
                 {
-                    viewModel.DebugOutput += output + Environment.NewLine;
-                    
-                    // Send to API for broadcasting to other clients
-                    Task.Run(async () =>
+                    if (System.Windows.Application.Current.MainWindow?.DataContext is ViewModels.MainViewModel viewModel)
                     {
-                        try
+                        viewModel.DebugOutput += output + Environment.NewLine;
+                        
+                        // Send to API for broadcasting to other clients
+                        Task.Run(async () =>
                         {
-                            string nodeName = _nodeService.CurrentNode.Name;
-                            string nodeId = _nodeService.CurrentNode.Id;
-                            await _apiClient.SendDebugMessageAsync(nodeName, output, nodeId);
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"Error broadcasting debug message: {ex.Message}");
-                        }
-                    });
+                            try
+                            {
+                                string nodeName = _nodeService.CurrentNode.Name;
+                                string nodeId = _nodeService.CurrentNode.Id;
+                                await _apiClient.SendDebugMessageAsync(nodeName, output, nodeId);
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"Error broadcasting debug message: {ex.Message}");
+                            }
+                        });
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error updating debug output: {ex.Message}");
+            }
+        }
+
+        private async Task<bool> TryAcquireFolderLockAsync(string folderPath, string nodeId)
+        {
+            try
+            {
+                string normalizedFolderPath = PathUtils.NormalizePath(folderPath);
+                string folderLockPath = PathUtils.GetFolderLockKey(normalizedFolderPath);
+                bool lockAcquired = await _apiClient.TryAcquireFileLockAsync(folderLockPath, nodeId);
+                if (lockAcquired)
+                {
+                    lock (_lockSetSync)
+                    {
+                        _heldLocks.Add(normalizedFolderPath);
+                    }
+                    UpdateDebugOutput($"Acquired lock for folder: {folderPath}");
                 }
-            });
+                else
+                {
+                    UpdateDebugOutput($"Could not acquire lock for folder: {folderPath} - already being processed by another node");
+                    
+                    // For additional diagnostics, try to find out who holds the lock
+                    try
+                    {
+                        var locks = await _apiClient.GetActiveLocksAsync();
+                        var matchingLock = locks.FirstOrDefault(l => l.FilePath.Equals(folderLockPath, StringComparison.OrdinalIgnoreCase));
+                        
+                        if (matchingLock != null)
+                        {
+                            UpdateDebugOutput($"Lock for {folderPath} is held by node: {matchingLock.LockingNodeId} since {matchingLock.AcquiredAt:u}");
+                        }
+                        else
+                        {
+                            UpdateDebugOutput($"WARNING: Lock acquisition failed but no matching lock found in database for {folderPath}");
+                            
+                            // Check for non-normalized versions of the lock
+                            var anyMatchingLocks = locks
+                                .Where(l => l.FilePath.StartsWith("folder_lock:") && 
+                                       l.FilePath.Substring(12).Equals(folderPath, StringComparison.OrdinalIgnoreCase))
+                                .ToList();
+                            
+                            if (anyMatchingLocks.Any())
+                            {
+                                foreach (var lock1 in anyMatchingLocks)
+                                {
+                                    UpdateDebugOutput($"Found possible non-normalized lock: {lock1.FilePath} held by: {lock1.LockingNodeId}");
+                                }
+                            }
+                            else
+                            {
+                                // Last resort: try to view all locks to help diagnose the issue
+                                var folderLocks = locks.Where(l => l.FilePath.StartsWith("folder_lock:")).ToList();
+                                UpdateDebugOutput($"Currently active folder locks in database: {folderLocks.Count}");
+                                
+                                if (folderLocks.Count < 10) // Only show if there's a reasonable number
+                                {
+                                    foreach (var lock1 in folderLocks)
+                                    {
+                                        UpdateDebugOutput($"  → {lock1.FilePath} (held by: {lock1.LockingNodeId})");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateDebugOutput($"Error checking lock details: {ex.Message}");
+                    }
+                }
+                return lockAcquired;
+            }
+            catch (Exception ex)
+            {
+                UpdateDebugOutput($"Error acquiring folder lock: {ex.Message}");
+                return false;
+            }
+        }
+
+        private async Task ReleaseFolderLockAsync(string folderPath, string nodeId)
+        {
+            try
+            {
+                string normalizedFolderPath = PathUtils.NormalizePath(folderPath);
+                string folderLockPath = PathUtils.GetFolderLockKey(normalizedFolderPath);
+                await _apiClient.ReleaseFileLockAsync(folderLockPath, nodeId);
+                lock (_lockSetSync)
+                {
+                    _heldLocks.Remove(normalizedFolderPath);
+                }
+                UpdateDebugOutput($"Released lock for folder: {folderPath}");
+            }
+            catch (Exception ex)
+            {
+                UpdateDebugOutput($"Error releasing folder lock: {ex.Message}");
+            }
         }
 
         private void ClearTaskFromUI(BatchTask task)
@@ -591,7 +907,13 @@ namespace VCDevTool.Client.Services
                 var mainWindow = System.Windows.Application.Current.MainWindow;
                 if (mainWindow?.DataContext is ViewModels.MainViewModel mainViewModel)
                 {
-                    var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
+                    // For VolumeCompression tasks that support concurrent processing, use the current node
+                    // For other tasks, use the task's assigned node ID
+                    string targetNodeId = (task.Type == TaskType.VolumeCompression) 
+                        ? _nodeService.CurrentNode.Id 
+                        : task.AssignedNodeId;
+                        
+                    var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == targetNodeId);
                     if (node != null)
                     {
                         node.ClearActiveTask();
@@ -608,7 +930,13 @@ namespace VCDevTool.Client.Services
                 var mainWindow = System.Windows.Application.Current.MainWindow;
                 if (mainWindow?.DataContext is ViewModels.MainViewModel mainViewModel)
                 {
-                    var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == task.AssignedNodeId);
+                    // For VolumeCompression tasks that support concurrent processing, use the current node
+                    // For other tasks, use the task's assigned node ID
+                    string targetNodeId = (task.Type == TaskType.VolumeCompression) 
+                        ? _nodeService.CurrentNode.Id 
+                        : task.AssignedNodeId;
+                        
+                    var node = mainViewModel.Nodes.FirstOrDefault(n => n.Id == targetNodeId);
                     if (node != null)
                     {
                         // Ensure the task has the right status and CompletedAt time before passing to UI
@@ -675,6 +1003,7 @@ namespace VCDevTool.Client.Services
                 List<string> fbxFilesWithoutE3d = new List<string>();
                 List<string> e3dFilesWithoutFbx = new List<string>();
                 bool continueWithUnpairedFiles = false;
+                int skippedDirectories = 0;
 
                 // Process each directory
                 foreach (string directory in directories)
@@ -684,141 +1013,159 @@ namespace VCDevTool.Client.Services
                         continue;
                     }
 
-                    // Get all .e3d and .fbx files
-                    var e3dFiles = Directory.GetFiles(directory, "*.e3d", SearchOption.TopDirectoryOnly);
-                    var fbxFiles = Directory.GetFiles(directory, "*.fbx", SearchOption.TopDirectoryOnly);
-
-                    // Group files by base name (without extension)
-                    var e3dDict = e3dFiles.ToDictionary(
-                        path => Path.GetFileNameWithoutExtension(path).ToLowerInvariant(),
-                        path => path
-                    );
-
-                    var fbxDict = fbxFiles.ToDictionary(
-                        path => Path.GetFileNameWithoutExtension(path).ToLowerInvariant(),
-                        path => path
-                    );
-
-                    // Find unpaired files
-                    foreach (var fbxFile in fbxFiles)
+                    // Use the new helper method for acquiring the lock
+                    bool lockAcquired = await TryAcquireFolderLockAsync(directory, _nodeService.CurrentNode.Id);
+                    
+                    if (!lockAcquired)
                     {
-                        string baseName = Path.GetFileNameWithoutExtension(fbxFile).ToLowerInvariant();
-                        if (!e3dDict.ContainsKey(baseName))
-                        {
-                            fbxFilesWithoutE3d.Add(fbxFile);
-                        }
-                        else
-                        {
-                            totalFilesPaired++;
-                        }
+                        UpdateDebugOutput($"Skipping directory: {directory} - already being processed by another node");
+                        skippedDirectories++;
+                        continue;
                     }
-
-                    foreach (var e3dFile in e3dFiles)
+                    
+                    try
                     {
-                        string baseName = Path.GetFileNameWithoutExtension(e3dFile).ToLowerInvariant();
-                        if (!fbxDict.ContainsKey(baseName))
-                        {
-                            e3dFilesWithoutFbx.Add(e3dFile);
-                        }
-                    }
+                        // Get all .e3d and .fbx files
+                        var e3dFiles = Directory.GetFiles(directory, "*.e3d", SearchOption.TopDirectoryOnly);
+                        var fbxFiles = Directory.GetFiles(directory, "*.fbx", SearchOption.TopDirectoryOnly);
 
-                    // Show alert for unpaired files if this is the first time we've found them
-                    if ((fbxFilesWithoutE3d.Count > 0 || e3dFilesWithoutFbx.Count > 0) && !continueWithUnpairedFiles)
-                    {
-                        // Format the list of unpaired files for display
-                        List<string> missingFilesList = new List<string>();
-                        
-                        foreach (var fbxFile in fbxFilesWithoutE3d)
-                        {
-                            missingFilesList.Add($"{Path.GetFileName(fbxFile)} (missing E3D counterpart)");
-                        }
-                        
-                        foreach (var e3dFile in e3dFilesWithoutFbx)
-                        {
-                            missingFilesList.Add($"{Path.GetFileName(e3dFile)} (missing FBX counterpart)");
-                        }
-                        
-                        // Limit the list for display purposes
-                        string filesList = string.Join("\n", missingFilesList.Take(10));
-                        if (missingFilesList.Count > 10)
-                        {
-                            filesList += $"\n... and {missingFilesList.Count - 10} more files";
-                        }
+                        // Group files by base name (without extension)
+                        var e3dDict = e3dFiles.ToDictionary(
+                            path => Path.GetFileNameWithoutExtension(path).ToLowerInvariant(),
+                            path => path
+                        );
 
-                        // Show the message box to user with counts
-                        bool shouldContinue = false;
-                        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
-                        {
-                            string message = $"{fbxFilesWithoutE3d.Count + e3dFilesWithoutFbx.Count} files are missing their counterparts:\n\n{filesList}\n\nWould you like to continue processing paired files only?";
-                            
-                            var result = System.Windows.MessageBox.Show(
-                                message,
-                                "Missing File Counterparts",
-                                System.Windows.MessageBoxButton.YesNo,
-                                System.Windows.MessageBoxImage.Warning
-                            );
-                            
-                            shouldContinue = (result == System.Windows.MessageBoxResult.Yes);
-                        });
+                        var fbxDict = fbxFiles.ToDictionary(
+                            path => Path.GetFileNameWithoutExtension(path).ToLowerInvariant(),
+                            path => path
+                        );
 
-                        if (!shouldContinue)
+                        // Find unpaired files
+                        foreach (var fbxFile in fbxFiles)
                         {
-                            // User chose not to continue
-                            await _apiClient.UpdateTaskStatusAsync(
-                                task.Id,
-                                BatchTaskStatus.Cancelled,
-                                "Task cancelled due to missing file counterparts"
-                            );
-                            ClearTaskFromUI(task);
-                            return;
-                        }
-                        
-                        // Set flag to avoid showing the message box again
-                        continueWithUnpairedFiles = true;
-                    }
-
-                    // Process matching pairs
-                    foreach (var fbxFile in fbxFiles)
-                    {
-                        string baseName = Path.GetFileNameWithoutExtension(fbxFile).ToLowerInvariant();
-                        
-                        // Check if there's a matching .e3d file
-                        if (e3dDict.TryGetValue(baseName, out string e3dFile))
-                        {
-                            // Original base name (preserving case)
-                            string originalBaseName = Path.GetFileNameWithoutExtension(fbxFile);
-                            
-                            // Create target folder
-                            string targetFolder = Path.Combine(directory, originalBaseName);
-                            
-                            try
+                            string baseName = Path.GetFileNameWithoutExtension(fbxFile).ToLowerInvariant();
+                            if (!e3dDict.ContainsKey(baseName))
                             {
-                                // Create the directory if it doesn't exist
-                                if (!Directory.Exists(targetFolder))
+                                fbxFilesWithoutE3d.Add(fbxFile);
+                            }
+                            else
+                            {
+                                totalFilesPaired++;
+                            }
+                        }
+
+                        foreach (var e3dFile in e3dFiles)
+                        {
+                            string baseName = Path.GetFileNameWithoutExtension(e3dFile).ToLowerInvariant();
+                            if (!fbxDict.ContainsKey(baseName))
+                            {
+                                e3dFilesWithoutFbx.Add(e3dFile);
+                            }
+                        }
+
+                        // Show alert for unpaired files if this is the first time we've found them
+                        if ((fbxFilesWithoutE3d.Count > 0 || e3dFilesWithoutFbx.Count > 0) && !continueWithUnpairedFiles)
+                        {
+                            // Format the list of unpaired files for display
+                            List<string> missingFilesList = new List<string>();
+                            
+                            foreach (var fbxFile in fbxFilesWithoutE3d)
+                            {
+                                missingFilesList.Add($"{Path.GetFileName(fbxFile)} (missing E3D counterpart)");
+                            }
+                            
+                            foreach (var e3dFile in e3dFilesWithoutFbx)
+                            {
+                                missingFilesList.Add($"{Path.GetFileName(e3dFile)} (missing FBX counterpart)");
+                            }
+                            
+                            // Limit the list for display purposes
+                            string filesList = string.Join("\n", missingFilesList.Take(10));
+                            if (missingFilesList.Count > 10)
+                            {
+                                filesList += $"\n... and {missingFilesList.Count - 10} more files";
+                            }
+
+                            // Show the message box to user with counts
+                            bool shouldContinue = false;
+                            await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                            {
+                                string message = $"{fbxFilesWithoutE3d.Count + e3dFilesWithoutFbx.Count} files are missing their counterparts:\n\n{filesList}\n\nWould you like to continue processing paired files only?";
+                                
+                                var result = System.Windows.MessageBox.Show(
+                                    message,
+                                    "Missing File Counterparts",
+                                    System.Windows.MessageBoxButton.YesNo,
+                                    System.Windows.MessageBoxImage.Warning
+                                );
+                                
+                                shouldContinue = (result == System.Windows.MessageBoxResult.Yes);
+                            });
+
+                            if (!shouldContinue)
+                            {
+                                // User chose not to continue
+                                await _apiClient.UpdateTaskStatusAsync(
+                                    task.Id,
+                                    BatchTaskStatus.Cancelled,
+                                    "Task cancelled due to missing file counterparts"
+                                );
+                                ClearTaskFromUI(task);
+                                return;
+                            }
+                            
+                            // Set flag to avoid showing the message box again
+                            continueWithUnpairedFiles = true;
+                        }
+
+                        // Process matching pairs
+                        foreach (var fbxFile in fbxFiles)
+                        {
+                            string baseName = Path.GetFileNameWithoutExtension(fbxFile).ToLowerInvariant();
+                            
+                            // Check if there's a matching .e3d file
+                            if (e3dDict.TryGetValue(baseName, out string e3dFile))
+                            {
+                                // Original base name (preserving case)
+                                string originalBaseName = Path.GetFileNameWithoutExtension(fbxFile);
+                                
+                                // Create target folder
+                                string targetFolder = Path.Combine(directory, originalBaseName);
+                                
+                                try
                                 {
-                                    Directory.CreateDirectory(targetFolder);
+                                    // Create the directory if it doesn't exist
+                                    if (!Directory.Exists(targetFolder))
+                                    {
+                                        Directory.CreateDirectory(targetFolder);
+                                    }
+
+                                    // Move the files to the new folder
+                                    string fbxDestination = Path.Combine(targetFolder, Path.GetFileName(fbxFile));
+                                    string e3dDestination = Path.Combine(targetFolder, Path.GetFileName(e3dFile));
+
+                                    File.Move(fbxFile, fbxDestination, false);
+                                    File.Move(e3dFile, e3dDestination, false);
+
+                                    processedPairs++;
+                                    
+                                    // Update progress
+                                    double progress = totalFilesPaired > 0 ? (double)processedPairs / totalFilesPaired : 1.0;
+                                    UpdateTaskProgress(task, progress);
+                                    
+                                    System.Diagnostics.Debug.WriteLine($"Packaged: {originalBaseName}");
                                 }
-
-                                // Move the files to the new folder
-                                string fbxDestination = Path.Combine(targetFolder, Path.GetFileName(fbxFile));
-                                string e3dDestination = Path.Combine(targetFolder, Path.GetFileName(e3dFile));
-
-                                File.Move(fbxFile, fbxDestination, false);
-                                File.Move(e3dFile, e3dDestination, false);
-
-                                processedPairs++;
-                                
-                                // Update progress
-                                double progress = totalFilesPaired > 0 ? (double)processedPairs / totalFilesPaired : 1.0;
-                                UpdateTaskProgress(task, progress);
-                                
-                                System.Diagnostics.Debug.WriteLine($"Packaged: {originalBaseName}");
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"Error packaging {originalBaseName}: {ex.Message}");
+                                catch (Exception ex)
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"Error packaging {originalBaseName}: {ex.Message}");
+                                }
                             }
                         }
+                    }
+                    finally
+                    {
+                        // Use the new helper method for releasing the lock
+                        await ReleaseFolderLockAsync(directory, _nodeService.CurrentNode.Id);
                     }
                 }
 
@@ -834,6 +1181,11 @@ namespace VCDevTool.Client.Services
                     resultMessage = totalFilesPaired > 0 
                         ? $"Packaged {processedPairs} of {totalFilesPaired} file pairs into folders"
                         : "No matching .e3d and .fbx pairs found to package";
+                }
+                
+                if (skippedDirectories > 0)
+                {
+                    resultMessage += $" ({skippedDirectories} directories skipped - already being processed by other nodes)";
                 }
                 
                 await _apiClient.UpdateTaskStatusAsync(
@@ -858,6 +1210,8 @@ namespace VCDevTool.Client.Services
 
         private async Task ExecuteVolumeCompressionTask(BatchTask task)
         {
+            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] *** STARTING VOLUME COMPRESSION TASK {task.Id} ***");
+            
             // Create a new cancellation token source for this task
             if (_cancellationTokenSource != null && _cancellationTokenSource.IsCancellationRequested)
             {
@@ -866,6 +1220,8 @@ namespace VCDevTool.Client.Services
             }
             
             CancellationToken cancellationToken = _cancellationTokenSource?.Token ?? CancellationToken.None;
+            string nodeId = _nodeService.CurrentNode.Id;
+            List<string> acquiredLocks = new List<string>();
             
             try
             {
@@ -884,7 +1240,7 @@ namespace VCDevTool.Client.Services
                     );
                     return;
                 }
-
+                
                 var rootDirectories = JsonSerializer.Deserialize<List<string>>(parameters["Directories"]);
                 if (rootDirectories == null || rootDirectories.Count == 0)
                 {
@@ -984,269 +1340,339 @@ namespace VCDevTool.Client.Services
                     return;
                 }
 
-                // Find all VDB files from the directories
-                List<string> allVdbFiles = new List<string>();
-                Dictionary<string, List<string>> vdbFilesByGroup = new Dictionary<string, List<string>>();
+                // Load existing folder progress records created during pre-scan
+                var existingFolderProgress = await _apiClient.GetTaskFoldersAsync(task.Id);
+                var folderProgressLookup = new Dictionary<string, TaskFolderProgress>();
                 
-                foreach (string rootPath in rootDirectories)
+                // Build lookup dictionary from existing folder progress records
+                foreach (var folderProgress in existingFolderProgress)
                 {
-                    // Check for cancellation
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        await _apiClient.UpdateTaskStatusAsync(
-                            task.Id,
-                            BatchTaskStatus.Cancelled,
-                            "Task was cancelled during file scan"
-                        );
-                        ClearTaskFromUI(task);
-                        return;
-                    }
+                    folderProgressLookup[folderProgress.FolderPath] = folderProgress;
+                }
+                
+                // If no pre-scanned folders exist, create them now (fallback)
+                if (!folderProgressLookup.Any())
+                {
+                    UpdateDebugOutput("No pre-scanned folder progress found, scanning directories now...");
                     
-                    if (!Directory.Exists(rootPath) && File.Exists(rootPath) && Path.GetExtension(rootPath).ToLower() == ".vdb")
+                    foreach (string rootPath in rootDirectories)
                     {
-                        // This is a direct VDB file
-                        allVdbFiles.Add(rootPath);
-                        
-                        // Group by filename without extension and without underscores
-                        string fileName = Path.GetFileNameWithoutExtension(rootPath);
-                        string groupName = fileName.Replace("_", "");
-                        
-                        if (!vdbFilesByGroup.ContainsKey(groupName))
+                        if (!Directory.Exists(rootPath))
                         {
-                            vdbFilesByGroup[groupName] = new List<string>();
+                            UpdateDebugOutput($"Directory not found: {rootPath}");
+                            continue;
                         }
-                        vdbFilesByGroup[groupName].Add(rootPath);
-                    }
-                    else if (Directory.Exists(rootPath))
-                    {
-                        // This is a directory, search for VDB files
-                        var vdbFiles = Directory.GetFiles(rootPath, "*.vdb", SearchOption.AllDirectories);
-                        allVdbFiles.AddRange(vdbFiles);
                         
-                        // Group VDBs by their parent directory
-                        foreach (string vdbFile in vdbFiles)
+                        // Check if this directory contains VDB files directly
+                        var vdbFiles = Directory.GetFiles(rootPath, "*.vdb", SearchOption.TopDirectoryOnly);
+                        if (vdbFiles.Length > 0)
                         {
-                            string parentDir = Path.GetFileName(Path.GetDirectoryName(vdbFile) ?? "");
-                            if (string.IsNullOrEmpty(parentDir))
+                            string folderPath = rootPath;
+                            if (!folderProgressLookup.ContainsKey(folderPath))
                             {
-                                parentDir = "Default";
+                                var folderProgress = new TaskFolderProgress
+                                {
+                                    TaskId = task.Id,
+                                    FolderPath = folderPath,
+                                    FolderName = Path.GetFileName(folderPath),
+                                    Status = TaskFolderStatus.Pending,
+                                    AssignedNodeId = null,
+                                    AssignedNodeName = null,
+                                    Progress = 0.0
+                                };
+
+                                try
+                                {
+                                    var createdProgress = await _apiClient.CreateTaskFolderAsync(task.Id, folderProgress);
+                                    if (createdProgress != null)
+                                    {
+                                        folderProgressLookup[folderPath] = createdProgress;
+                                        UpdateDebugOutput($"Created fallback folder progress record for: {folderProgress.FolderName}");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    UpdateDebugOutput($"Error creating fallback folder progress record for {folderProgress.FolderName}: {ex.Message}");
+                                }
                             }
-                            
-                            if (!vdbFilesByGroup.ContainsKey(parentDir))
+                        }
+                        else
+                        {
+                            // Check subdirectories for VDB files
+                            try
                             {
-                                vdbFilesByGroup[parentDir] = new List<string>();
+                                var subdirectories = Directory.GetDirectories(rootPath);
+                                foreach (var subdir in subdirectories)
+                                {
+                                    var subdirVdbFiles = Directory.GetFiles(subdir, "*.vdb", SearchOption.TopDirectoryOnly);
+                                    if (subdirVdbFiles.Length > 0)
+                                    {
+                                        string folderPath = subdir;
+                                        if (!folderProgressLookup.ContainsKey(folderPath))
+                                        {
+                                            var folderProgress = new TaskFolderProgress
+                                            {
+                                                TaskId = task.Id,
+                                                FolderPath = folderPath,
+                                                FolderName = Path.GetFileName(folderPath),
+                                                Status = TaskFolderStatus.Pending,
+                                                AssignedNodeId = null,
+                                                AssignedNodeName = null,
+                                                Progress = 0.0
+                                            };
+
+                                            try
+                                            {
+                                                var createdProgress = await _apiClient.CreateTaskFolderAsync(task.Id, folderProgress);
+                                                if (createdProgress != null)
+                                                {
+                                                    folderProgressLookup[folderPath] = createdProgress;
+                                                    UpdateDebugOutput($"Created fallback folder progress record for: {folderProgress.FolderName}");
+                                                }
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                UpdateDebugOutput($"Error creating fallback folder progress record for {folderProgress.FolderName}: {ex.Message}");
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                            vdbFilesByGroup[parentDir].Add(vdbFile);
+                            catch (Exception ex)
+                            {
+                                UpdateDebugOutput($"Error scanning subdirectories in {rootPath}: {ex.Message}");
+                            }
                         }
                     }
                 }
                 
-                if (allVdbFiles.Count == 0)
+                // If no folders with VDBs were found, abort the task
+                if (!folderProgressLookup.Any())
                 {
+                    UpdateDebugOutput("No directories containing VDB files found to process");
                     await _apiClient.UpdateTaskStatusAsync(
                         task.Id,
                         BatchTaskStatus.Completed,
-                        "No VDB files were found in the selected directories"
+                        "No directories containing VDB files found to process"
                     );
                     ClearTaskFromUI(task, true);
                     return;
                 }
                 
-                // Check for cancellation again after scanning
-                if (cancellationToken.IsCancellationRequested)
+                UpdateDebugOutput($"Found {folderProgressLookup.Count} directories containing VDB files");
+
+                // Calculate total files for progress tracking
+                int totalFiles = 0;
+                foreach (var folderEntry in folderProgressLookup)
                 {
-                    await _apiClient.UpdateTaskStatusAsync(
-                        task.Id,
-                        BatchTaskStatus.Cancelled,
-                        "Task was cancelled after file scan"
-                    );
-                    ClearTaskFromUI(task);
-                    return;
+                    string folderPath = folderEntry.Key;
+                    if (Directory.Exists(folderPath))
+                    {
+                        var vdbFiles = Directory.GetFiles(folderPath, "*.vdb", SearchOption.TopDirectoryOnly);
+                        totalFiles += vdbFiles.Length;
+                    }
                 }
                 
-                // Update debug output only, keep UI task name consistent
-                System.Diagnostics.Debug.WriteLine($"Found {allVdbFiles.Count} VDB files in {vdbFilesByGroup.Count} groups");
-                UpdateDebugOutput($"Found {allVdbFiles.Count} VDB files in {vdbFilesByGroup.Count} groups");
+                UpdateDebugOutput($"Total files to process: {totalFiles} across {folderProgressLookup.Count} folders");
+                UpdateDebugOutput($"Node {_nodeService.CurrentNode.Name} starting concurrent folder processing...");
+                UpdateDebugOutput($"=== CONCURRENT PROCESSING MODE: Each node will claim available folders independently ===");
+
+                // **NEW CONCURRENT PROCESSING LOGIC**
+                // Instead of processing folders sequentially, continuously look for available folders
+                int processedFolders = 0;
+                int processedFiles = 0;
+                int maxRetries = 3;
+                int retryCount = 0;
                 
-                // Process each group of VDB files
-                int processedGroups = 0;
-                int successfulGroups = 0;
-                int failedGroups = 0;
-                
-                foreach (var group in vdbFilesByGroup)
+                while (processedFolders < folderProgressLookup.Count && retryCount < maxRetries)
                 {
-                    // Check if the task has been cancelled
+                    // Check for cancellation
                     if (cancellationToken.IsCancellationRequested)
                     {
-                        // Break the loop and go to the finally block
+                        UpdateDebugOutput("Volume compression task was cancelled by user");
                         break;
                     }
                     
-                    string groupName = group.Key;
-                    var files = group.Value;
+                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Looking for available folders to process... (attempt {retryCount + 1}/{maxRetries})");
                     
-                    if (files.Count == 0)
+                    // Get current folder statuses from the database to see what's available
+                    var currentTaskFolders = await _apiClient.GetTaskFoldersAsync(task.Id);
+                    var availableFolders = currentTaskFolders
+                        .Where(f => f.Status == TaskFolderStatus.Pending)
+                        .OrderBy(f => f.FolderName) // Process in consistent order for better load balancing
+                        .ToList();
+                    
+                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Found {availableFolders.Count} pending folders, {currentTaskFolders.Where(f => f.Status == TaskFolderStatus.InProgress).Count()} in progress, {currentTaskFolders.Where(f => f.Status == TaskFolderStatus.Completed).Count()} completed");
+                    
+                    if (!availableFolders.Any())
                     {
-                        continue;
-                    }
-                    
-                    // Keep the task name consistent
-                    // Log group info to debug output only
-                    UpdateDebugOutput($"Processing group: {groupName}");
-                    
-                    try
-                    {
-                        // Determine output folder and input folder
-                        string outputFolder;
-                        string inputFolder = Path.GetDirectoryName(files[0]) ?? "";
+                        // No more pending folders, check if any are still in progress
+                        var inProgressFolders = currentTaskFolders
+                            .Where(f => f.Status == TaskFolderStatus.InProgress)
+                            .ToList();
                         
-                        if (useOverrideOutput && !string.IsNullOrEmpty(overrideOutputDirectory))
+                        if (inProgressFolders.Any())
                         {
-                            // Use the override output directory with a subfolder for the group
-                            outputFolder = Path.Combine(overrideOutputDirectory, groupName);
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] No pending folders available. {inProgressFolders.Count} folders still in progress by other nodes. Waiting...");
+                            foreach (var inProgressFolder in inProgressFolders)
+                            {
+                                UpdateDebugOutput($"  → {inProgressFolder.FolderName} being processed by {inProgressFolder.AssignedNodeName ?? inProgressFolder.AssignedNodeId ?? "unknown"}");
+                            }
+                            await Task.Delay(2000, cancellationToken); // Wait 2 seconds before checking again
+                            retryCount++;
+                            continue;
                         }
                         else
                         {
-                            // Use the same directory as the first file
-                            outputFolder = inputFolder;
+                            // All folders are completed or failed
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] All folders have been processed by all nodes");
+                            break;
+                        }
+                    }
+                    
+                    // Reset retry count since we found available folders
+                    retryCount = 0;
+                    
+                    // Try to claim and process the first available folder
+                    bool foundWork = false;
+                    foreach (var availableFolder in availableFolders)
+                    {
+                        // Check for cancellation
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            UpdateDebugOutput("Volume compression task was cancelled by user");
+                            break;
                         }
                         
-                        // Create the output folder if it doesn't exist
-                        if (!Directory.Exists(outputFolder))
+                        string folderPath = availableFolder.FolderPath;
+                        
+                        // Try to acquire a lock for this specific folder
+                        bool lockAcquired = await TryAcquireFolderLockAsync(folderPath, nodeId);
+                        if (!lockAcquired)
                         {
-                            Directory.CreateDirectory(outputFolder);
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Could not acquire lock for folder: {Path.GetFileName(folderPath)} - trying next folder");
+                            continue; // Try next folder
                         }
+                        
+                        // Successfully acquired lock - process this folder
+                        foundWork = true;
+                        acquiredLocks.Add(folderPath);
                         
                         try
                         {
-                            // Get folder name for output file
-                            string folderName = Path.GetFileName(inputFolder);
-                            if (string.IsNullOrEmpty(folderName))
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Processing folder: {Path.GetFileName(folderPath)} (lock acquired)");
+                            
+                            // Mark folder as in progress
+                            try
                             {
-                                folderName = groupName;
+                                await _apiClient.UpdateTaskFolderStatusAsync(
+                                    availableFolder.Id, 
+                                    TaskFolderStatus.InProgress, 
+                                    nodeId, 
+                                    _nodeService.CurrentNode.Name,
+                                    0.0);
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Started processing folder: {availableFolder.FolderName}");
+                            }
+                            catch (Exception ex)
+                            {
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error updating folder progress to InProgress: {ex.Message}");
                             }
                             
-                            // Determine suffix based on density options
-                            string densitySuffix = "_native";
-                            if (useFixedDimension)
+                            // Get VDB files in this folder
+                            var vdbFiles = Directory.GetFiles(folderPath, "*.vdb", SearchOption.TopDirectoryOnly);
+                            if (vdbFiles.Length == 0)
                             {
-                                densitySuffix = "_HD";
-                            }
-                            else if (useSdDimension)
-                            {
-                                densitySuffix = "_SD";
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] No VDB files found in folder: {availableFolder.FolderName}");
+                                
+                                // Mark folder as completed (no files to process)
+                                await _apiClient.UpdateTaskFolderStatusAsync(
+                                    availableFolder.Id, 
+                                    TaskFolderStatus.Completed, 
+                                    nodeId, 
+                                    _nodeService.CurrentNode.Name,
+                                    1.0);
+                                processedFolders++;
+                                continue;
                             }
                             
-                            // Add the density suffix to folder name before any numbers
-                            string outputBaseName;
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Found {vdbFiles.Length} VDB files in folder: {availableFolder.FolderName}");
                             
-                            // Check if the name contains a number sequence
-                            int numberedPartIndex = -1;
-                            for (int i = 0; i < folderName.Length; i++)
+                            // Process each VDB file in this folder
+                            for (int i = 0; i < vdbFiles.Length; i++)
                             {
-                                if (char.IsDigit(folderName[i]))
+                                // Check for cancellation before processing each file
+                                if (cancellationToken.IsCancellationRequested)
                                 {
-                                    // Find the start of the numeric sequence
-                                    int start = i;
-                                    while (start > 0 && folderName[start - 1] == '_')
+                                    UpdateDebugOutput("Volume compression task was cancelled by user");
+                                    break;
+                                }
+                                
+                                string inputFile = vdbFiles[i];
+                                string inputFileName = Path.GetFileName(inputFile);
+                                string inputBaseName = Path.GetFileNameWithoutExtension(inputFile);
+                                string outputFileName = $"{inputBaseName}_compressed.vdb";
+                                
+                                string outputDir;
+                                if (useOverrideOutput && !string.IsNullOrEmpty(overrideOutputDirectory))
+                                {
+                                    outputDir = overrideOutputDirectory;
+                                }
+                                else 
+                                {
+                                    // Default: create a "Compressed" subfolder in the same directory as input files
+                                    outputDir = Path.Combine(folderPath, "Compressed");
+                                }
+                                
+                                // Create the output directory if it doesn't exist
+                                if (!Directory.Exists(outputDir))
+                                {
+                                    Directory.CreateDirectory(outputDir);
+                                }
+                                
+                                string outputPath = Path.Combine(outputDir, outputFileName);
+                                
+                                // Set compression encoding based on the compression level
+                                string encodingArg = "";
+                                if (compressionLevel == "No Compression")
+                                {
+                                    encodingArg = "--encoding none";
+                                }
+                                else if (compressionLevel == "Medium Compression")
+                                {
+                                    encodingArg = "--encoding quant8";
+                                }
+                                else if (compressionLevel == "High Compression")
+                                {
+                                    encodingArg = "--encoding quant4";
+                                }
+                                
+                                // Build the full command with correct argument order for a single file:
+                                // volume_compressor.exe [OPTIONS] --output <o> <INPUT>
+                                var outputArg = $"--output \"{outputPath}\"";
+                                var arguments = $"{encodingArg} --overwrite {outputArg} \"{inputFile}\"";
+                                
+                                // Start the volume compressor process with output redirection for this file
+                                using var process = new Process
+                                {
+                                    StartInfo = new ProcessStartInfo
                                     {
-                                        start--;
+                                        FileName = executablePath,
+                                        Arguments = arguments,
+                                        UseShellExecute = false,
+                                        RedirectStandardOutput = true,
+                                        RedirectStandardError = true,
+                                        CreateNoWindow = true
                                     }
-                                    numberedPartIndex = start;
-                                    break;
-                                }
-                            }
-                            
-                            if (numberedPartIndex > 0)
-                            {
-                                // Insert the density suffix before the underscore that precedes the numbers
-                                outputBaseName = folderName.Substring(0, numberedPartIndex) + densitySuffix + folderName.Substring(numberedPartIndex);
-                            }
-                            else
-                            {
-                                // No numbers found, just append the suffix
-                                outputBaseName = folderName + densitySuffix;
-                            }
-                            
-                            // Create output file path in the output folder
-                            string outputFile;
-                            
-                            if (createOutputFolder)
-                            {
-                                // Create a subfolder with the same name plus density suffix
-                                string targetSubfolder = Path.Combine(outputFolder, outputBaseName);
+                                };
                                 
-                                // Create the subfolder if it doesn't exist
-                                if (!Directory.Exists(targetSubfolder))
-                                {
-                                    Directory.CreateDirectory(targetSubfolder);
-                                }
+                                // Log the command
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Running command: {executablePath} {arguments}");
                                 
-                                outputFile = Path.Combine(targetSubfolder, $"{outputBaseName}.vcvol");
-                            }
-                            else
-                            {
-                                // Put the file directly in the output folder without creating a subfolder
-                                outputFile = Path.Combine(outputFolder, $"{outputBaseName}.vcvol");
-                            }
-                            
-                            // Build the command line arguments for Volume Compressor
-                            string arguments = "-w -o \"" + outputFile + "\"";
-                            
-                            // Add dimension flag based on which option is selected
-                            if (useFixedDimension)
-                            {
-                                arguments += " -d 512";
-                            }
-                            else if (useSdDimension)
-                            {
-                                arguments += " -d 350";
-                            }
-                            
-                            // Add compression flag based on selected compression level
-                            switch (compressionLevel)
-                            {
-                                case "4x Compression":
-                                    arguments += " -c 4";
-                                    break;
-                                case "8x Compression":
-                                    arguments += " -c 8";
-                                    break;
-                                case "No Compression":
-                                default:
-                                    // No compression flag needed for "No Compression"
-                                    break;
-                            }
-                            
-                            // Add the input folder as input
-                            arguments += " \"" + inputFolder + "\"";
-                            
-                            // Create process start info
-                            var startInfo = new ProcessStartInfo
-                            {
-                                FileName = executablePath,
-                                Arguments = arguments,
-                                UseShellExecute = false,
-                                CreateNoWindow = true,  // Hide the command window
-                                RedirectStandardOutput = true,
-                                RedirectStandardError = true,
-                                WorkingDirectory = inputFolder
-                            };
-                            
-                            UpdateDebugOutput($"=== Processing folder: {inputFolder} ({processedGroups + 1}/{vdbFilesByGroup.Count}) ===");
-                            UpdateDebugOutput($"Command: {executablePath} {arguments}");
-                            
-                            // Start the process
-                            using (var process = new Process())
-                            {
-                                process.StartInfo = startInfo;
-                                
-                                // Set up event handlers for real-time output
                                 process.OutputDataReceived += (sender, e) =>
                                 {
                                     if (!string.IsNullOrEmpty(e.Data))
                                     {
-                                        UpdateDebugOutput($"STDOUT: {e.Data}");
+                                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] VC: {e.Data}");
                                     }
                                 };
                                 
@@ -1254,96 +1680,303 @@ namespace VCDevTool.Client.Services
                                 {
                                     if (!string.IsNullOrEmpty(e.Data))
                                     {
-                                        UpdateDebugOutput($"STDERR: {e.Data}");
+                                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] VC Error: {e.Data}");
                                     }
                                 };
                                 
                                 // Start the process and begin reading output
+                                _runningProcesses[_nodeService.CurrentNode.Id] = process;
                                 process.Start();
                                 process.BeginOutputReadLine();
                                 process.BeginErrorReadLine();
                                 
-                                // Wait for process to exit
-                                await process.WaitForExitAsync();
+                                // Wait for the process to complete
+                                await Task.Run(() => process.WaitForExit(), cancellationToken);
                                 
-                                // Check if process was successful
-                                if (process.ExitCode == 0)
+                                if (process.ExitCode != 0)
                                 {
-                                    successfulGroups++;
-                                    System.Diagnostics.Debug.WriteLine($"Successfully compressed folder: {inputFolder}");
+                                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Volume Compressor exited with code {process.ExitCode} for file {inputFileName}");
                                 }
                                 else
                                 {
-                                    failedGroups++;
-                                    System.Diagnostics.Debug.WriteLine($"Failed to compress folder: {inputFolder}, exit code: {process.ExitCode}");
+                                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Successfully processed file {inputFileName}");
+                                }
+                                
+                                // Update progress for this folder
+                                double currentFolderProgress = (double)(i + 1) / vdbFiles.Length;
+                                try
+                                {
+                                    await _apiClient.UpdateTaskFolderStatusAsync(
+                                        availableFolder.Id, 
+                                        TaskFolderStatus.InProgress, 
+                                        nodeId, 
+                                        _nodeService.CurrentNode.Name,
+                                        currentFolderProgress);
+                                }
+                                catch (Exception ex)
+                                {
+                                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error updating folder progress: {ex.Message}");
+                                }
+                                
+                                // Update overall task progress
+                                processedFiles++;
+                                double overallProgress = totalFiles > 0 ? (double)processedFiles / totalFiles : 0;
+                                UpdateTaskProgress(task, overallProgress);
+                                
+                                // Clean up process
+                                _runningProcesses.TryRemove(_nodeService.CurrentNode.Id, out _);
+                            }
+                            
+                            // Mark folder as completed if all files were processed successfully
+                            if (!cancellationToken.IsCancellationRequested)
+                            {
+                                try
+                                {
+                                    await _apiClient.UpdateTaskFolderStatusAsync(
+                                        availableFolder.Id, 
+                                        TaskFolderStatus.Completed, 
+                                        nodeId, 
+                                        _nodeService.CurrentNode.Name,
+                                        1.0);
+                                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Completed processing folder: {availableFolder.FolderName}");
+                                    processedFolders++;
+                                }
+                                catch (Exception ex)
+                                {
+                                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error updating folder progress to Completed: {ex.Message}");
                                 }
                             }
                         }
                         catch (Exception ex)
                         {
-                            failedGroups++;
-                            System.Diagnostics.Debug.WriteLine($"Error processing folder {inputFolder}: {ex.Message}");
-                            UpdateDebugOutput($"Error processing folder {inputFolder}: {ex.Message}");
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error processing folder {folderPath}: {ex.Message}");
+                            
+                            // Mark folder as failed
+                            try
+                            {
+                                await _apiClient.UpdateTaskFolderStatusAsync(
+                                    availableFolder.Id, 
+                                    TaskFolderStatus.Failed, 
+                                    nodeId, 
+                                    _nodeService.CurrentNode.Name,
+                                    0.0);
+                            }
+                            catch (Exception updateEx)
+                            {
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error updating folder progress to Failed: {updateEx.Message}");
+                            }
+                        }
+                        finally
+                        {
+                            // Release the lock for this folder
+                            await ReleaseFolderLockAsync(folderPath, nodeId);
+                            acquiredLocks.Remove(folderPath);
                         }
                         
-                        // Increment counter and update progress
-                        processedGroups++;
-                        double progress = (double)processedGroups / vdbFilesByGroup.Count;
-                        
-                        // Update task progress (use our helper method)
-                        UpdateTaskProgress(task, progress);
-                        
-                        // Add small delay to ensure UI updates
-                        await Task.Delay(100);
+                        // Break out of the folder loop since we found and processed work
+                        break;
                     }
-                    catch (Exception ex)
+                    
+                    if (!foundWork)
                     {
-                        UpdateDebugOutput($"Error processing group {groupName}: {ex.Message}");
+                        // No folders could be locked, wait a bit before trying again
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] No folders could be locked, waiting before retry...");
+                        await Task.Delay(1000, cancellationToken);
+                        retryCount++;
                     }
                 }
-
+                
                 // Check if the task was cancelled
                 if (cancellationToken.IsCancellationRequested)
                 {
                     await _apiClient.UpdateTaskStatusAsync(
                         task.Id,
                         BatchTaskStatus.Cancelled,
-                        $"Task was cancelled after processing {processedGroups} of {vdbFilesByGroup.Count} folders"
+                        $"Task was cancelled after processing {processedFiles} files in {processedFolders} folders by node {_nodeService.CurrentNode.Name}"
                     );
                     ClearTaskFromUI(task);
                     return;
                 }
-
-                // Mark task as completed
-                string resultMessage = $"Volume compression completed. Successfully processed {successfulGroups} of {vdbFilesByGroup.Count} folders";
-                if (failedGroups > 0)
-                {
-                    resultMessage += $" ({failedGroups} failed)";
-                }
                 
-                Debug.WriteLine($"[VolumeCompressionTask] Task {task.Id}: updating API to Completed with message: {resultMessage}");
-                await _apiClient.UpdateTaskStatusAsync(
-                    task.Id,
-                    BatchTaskStatus.Completed,
-                    resultMessage
-                );
-
-                // Clear the task from UI after a short delay and trigger Slack
+                // Check final status of all folders to determine if task is complete
+                var finalFolderProgress = await _apiClient.GetTaskFoldersAsync(task.Id);
+                var completedFolders = finalFolderProgress.Where(f => f.Status == TaskFolderStatus.Completed).Count();
+                var failedFolders = finalFolderProgress.Where(f => f.Status == TaskFolderStatus.Failed).Count();
+                var totalFolders = finalFolderProgress.Count();
+                
+                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Final status: {completedFolders} completed, {failedFolders} failed, {totalFolders} total folders");
+                
+                // Only mark task as completed if this is the last node working on it
+                // (We'll let the task completion be handled by a separate process or the last node)
+                string resultMessage = $"Node {_nodeService.CurrentNode.Name} finished processing. Processed {processedFiles} files in {processedFolders} folders";
+                
+                // Don't change the overall task status here - let the system determine when all nodes are done
+                UpdateDebugOutput(resultMessage);
+                
+                // Clear the task from UI after a short delay
                 await Task.Delay(500);
-                Debug.WriteLine($"[VolumeCompressionTask] Task {task.Id}: about to clear UI and trigger Slack");
                 ClearTaskFromUI(task, true);
-                Debug.WriteLine($"[VolumeCompressionTask] Task {task.Id}: UI cleared");
             }
             catch (Exception ex)
             {
+                _runningProcesses.TryRemove(_nodeService.CurrentNode.Id, out _); // Cleanup on error
                 Debug.WriteLine($"[VolumeCompressionTask] Task {task.Id}: error occurred: {ex.Message}");
                 await _apiClient.UpdateTaskStatusAsync(
                     task.Id,
                     BatchTaskStatus.Failed,
-                    $"Error processing volume compression: {ex.Message}"
+                    $"Error processing volume compression on node {_nodeService.CurrentNode.Name}: {ex.Message}"
                 );
                 Debug.WriteLine($"[VolumeCompressionTask] Task {task.Id}: clearing UI without Slack");
                 ClearTaskFromUI(task, false);
+            }
+            finally
+            {
+                // Clean up all acquired locks
+                foreach (var lockPath in acquiredLocks)
+                {
+                    try
+                    {
+                        await ReleaseFolderLockAsync(lockPath, nodeId);
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Released lock for folder: {lockPath} on task completion");
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error releasing lock for {lockPath}: {ex.Message}");
+                    }
+                }
+                
+                // Also clean up any orphaned locks for this node
+                try
+                {
+                    var locks = await _apiClient.GetActiveLocksAsync();
+                    var nodeLocks = locks.Where(l => l.LockingNodeId == nodeId && l.FilePath.StartsWith("folder_lock:")).ToList();
+                    
+                    if (nodeLocks.Any())
+                    {
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Found {nodeLocks.Count} additional folder locks to clean up");
+                        
+                        foreach (var lockItem in nodeLocks)
+                        {
+                            try
+                            {
+                                string folderPath = lockItem.FilePath.Substring(12); // Remove "folder_lock:" prefix
+                                string normalizedFolderPath = PathUtils.NormalizePath(folderPath);
+                                string folderLockPath = PathUtils.GetFolderLockKey(normalizedFolderPath);
+                                await _apiClient.ReleaseFileLockAsync(folderLockPath, nodeId);
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Released orphaned lock for folder: {folderPath}");
+                            }
+                            catch (Exception ex)
+                            {
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error releasing orphaned lock: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error cleaning up orphaned locks: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Pre-scans directories for volume compression tasks and creates folder progress records
+        /// This should be called when the task is created, before execution starts
+        /// </summary>
+        public async Task PreScanVolumeCompressionTaskAsync(BatchTask task)
+        {
+            try
+            {
+                if (task.Type != TaskType.VolumeCompression)
+                {
+                    return; // Only process volume compression tasks
+                }
+
+                // Parse parameters
+                var parameters = JsonSerializer.Deserialize<Dictionary<string, string>>(task.Parameters ?? "{}");
+                if (parameters == null || !parameters.ContainsKey("Directories"))
+                {
+                    return;
+                }
+
+                var rootDirectories = JsonSerializer.Deserialize<List<string>>(parameters["Directories"]);
+                if (rootDirectories == null || rootDirectories.Count == 0)
+                {
+                    return;
+                }
+
+                // Clear any existing folder progress records for this task
+                await _apiClient.DeleteTaskFoldersAsync(task.Id);
+
+                // Scan directories and create folder progress records
+                var foldersWithVdbs = new List<string>();
+
+                foreach (string rootPath in rootDirectories)
+                {
+                    if (Directory.Exists(rootPath))
+                    {
+                        // Check if this directory contains VDB files directly
+                        var vdbFiles = Directory.GetFiles(rootPath, "*.vdb", SearchOption.TopDirectoryOnly);
+                        if (vdbFiles.Length > 0)
+                        {
+                            foldersWithVdbs.Add(rootPath);
+                        }
+                        else
+                        {
+                            // Check subdirectories for VDB files
+                            try
+                            {
+                                var subdirectories = Directory.GetDirectories(rootPath);
+                                foreach (var subdir in subdirectories)
+                                {
+                                    var subdirVdbFiles = Directory.GetFiles(subdir, "*.vdb", SearchOption.TopDirectoryOnly);
+                                    if (subdirVdbFiles.Length > 0)
+                                    {
+                                        foldersWithVdbs.Add(subdir);
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                UpdateDebugOutput($"Error scanning subdirectories in {rootPath}: {ex.Message}");
+                            }
+                        }
+                    }
+                }
+
+                // Create folder progress records for all directories containing VDB files
+                foreach (string folderPath in foldersWithVdbs)
+                {
+                    var folderProgress = new TaskFolderProgress
+                    {
+                        TaskId = task.Id,
+                        FolderPath = folderPath,
+                        FolderName = Path.GetFileName(folderPath),
+                        Status = TaskFolderStatus.Pending,
+                        AssignedNodeId = null,
+                        AssignedNodeName = null,
+                        Progress = 0.0
+                    };
+
+                    try
+                    {
+                        var createdProgress = await _apiClient.CreateTaskFolderAsync(task.Id, folderProgress);
+                        if (createdProgress != null)
+                        {
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Pre-created folder progress record for: {folderProgress.FolderName}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error creating folder progress record for {folderProgress.FolderName}: {ex.Message}");
+                    }
+                }
+
+                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Pre-scan completed: Found {foldersWithVdbs.Count} directories containing VDB files");
+            }
+            catch (Exception ex)
+            {
+                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error during pre-scan: {ex.Message}");
             }
         }
 
@@ -1407,138 +2040,159 @@ namespace VCDevTool.Client.Services
                 int processedFolders = 0;
                 int successfulFolders = 0;
                 int failedFolders = 0;
+                int skippedFolders = 0;
                 
                 // Process each folder
                 foreach (var rootDir in rootDirectories)
                 {
                     if (!Directory.Exists(rootDir))
                     {
-                        UpdateDebugOutput($"Directory not found: {rootDir}");
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Directory not found: {rootDir}");
                         continue;
                     }
 
                     try
                     {
-                        // Get the folder name to use for project name
-                        string folderName = new DirectoryInfo(rootDir).Name;
-                        UpdateDebugOutput($"Processing folder: {folderName}");
-
-                        // Define paths for the project
-                        string jpegsFolder = Path.Combine(rootDir, "Jpegs");
-                        string tiffsFolder = Path.Combine(rootDir, "Tiffs");
-                        string pngsFolder = Path.Combine(rootDir, "PNGs");
-
-                        // Create the working directory structure if it doesn't exist
-                        string workingFolder = Path.Combine(rootDir, "00_Working", "01_Reality_Capture");
-                        if (!Directory.Exists(workingFolder))
-                        {
-                            Directory.CreateDirectory(workingFolder);
-                        }
-
-                        string projectFile = Path.Combine(workingFolder, $"{folderName}.rcproj");
-
-                        // Build command line arguments for Reality Capture
-                        string arguments = "-clearCache";
+                        // Use the new helper method for acquiring the lock
+                        bool lockAcquired = await TryAcquireFolderLockAsync(rootDir, _nodeService.CurrentNode.Id);
                         
-                        // Add folders containing the images
-                        // First check PNG folder as primary
-                        if (Directory.Exists(pngsFolder) && Directory.EnumerateFiles(pngsFolder, "*.png").Any())
+                        if (!lockAcquired)
                         {
-                            arguments += $" -addFolder \"{pngsFolder}\"";
-                        }
-                        // Then JPEGs as fallback
-                        else if (Directory.Exists(jpegsFolder) && Directory.EnumerateFiles(jpegsFolder, "*.jpg").Any())
-                        {
-                            arguments += $" -addFolder \"{jpegsFolder}\"";
-                        }
-                        else
-                        {
-                            UpdateDebugOutput($"No PNG or JPEG images found in {folderName}");
-                            failedFolders++;
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Skipping folder: {rootDir} - already being processed by another node");
+                            skippedFolders++;
                             continue;
                         }
                         
-                        // Main algorithm options
-                        arguments += " -selectAllImages"
-                         + $" -save \"{projectFile}\""
-                         + " -align"
-                         + $" -save \"{projectFile}\""
-                         + " -selectMaximalComponent"
-                         + " -setReconstructionRegionAuto"
-                         + " -calculateHighModel"
-                         + " -selectMarginalTriangles"
-                         + " -removeSelectedTriangles"
-                         + " -selectLargestModelComponent"
-                         + " -invertTrianglesSelection"
-                         + " -removeSelectedTriangles"
-                         + " -renameSelectedModel HP"
-                         + " -selectModel HP"
-                         + $" -save \"{projectFile}\""
-                         + " -quit";
-
-                        // Start the Reality Capture process
-                        using var process = new Process
+                        try
                         {
-                            StartInfo = new ProcessStartInfo
+                            // Get the folder name to use for project name
+                            string folderName = new DirectoryInfo(rootDir).Name;
+                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Processing folder: {folderName} (lock acquired)");
+
+                            // Define paths for the project
+                            string jpegsFolder = Path.Combine(rootDir, "Jpegs");
+                            string tiffsFolder = Path.Combine(rootDir, "Tiffs");
+                            string pngsFolder = Path.Combine(rootDir, "PNGs");
+
+                            // Create the working directory structure if it doesn't exist
+                            string workingFolder = Path.Combine(rootDir, "00_Working", "01_Reality_Capture");
+                            if (!Directory.Exists(workingFolder))
                             {
-                                FileName = realityCaptureExe,
-                                Arguments = arguments,
-                                UseShellExecute = false,
-                                RedirectStandardOutput = true,
-                                RedirectStandardError = true,
-                                CreateNoWindow = true
+                                Directory.CreateDirectory(workingFolder);
                             }
-                        };
 
-                        // Log the command
-                        UpdateDebugOutput($"Running command: {realityCaptureExe} {arguments}");
+                            string projectFile = Path.Combine(workingFolder, $"{folderName}.rcproj");
 
-                        process.OutputDataReceived += (sender, e) =>
-                        {
-                            if (!string.IsNullOrEmpty(e.Data))
+                            // Build command line arguments for Reality Capture
+                            string arguments = "-clearCache";
+                            
+                            // Add folders containing the images
+                            // First check PNG folder as primary
+                            if (Directory.Exists(pngsFolder) && Directory.EnumerateFiles(pngsFolder, "*.png").Any())
                             {
-                                UpdateDebugOutput($"RC: {e.Data}");
+                                arguments += $" -addFolder \"{pngsFolder}\"";
                             }
-                        };
-
-                        process.ErrorDataReceived += (sender, e) =>
-                        {
-                            if (!string.IsNullOrEmpty(e.Data))
+                            // Then JPEGs as fallback
+                            else if (Directory.Exists(jpegsFolder) && Directory.EnumerateFiles(jpegsFolder, "*.jpg").Any())
                             {
-                                UpdateDebugOutput($"RC Error: {e.Data}");
+                                arguments += $" -addFolder \"{jpegsFolder}\"";
                             }
-                        };
-
-                        process.Start();
-                        process.BeginOutputReadLine();
-                        process.BeginErrorReadLine();
-
-                        // Wait for the process to complete with timeout
-                        bool completed = await Task.Run(() => process.WaitForExit(60 * 60 * 1000), cancellationToken); // 1 hour timeout
-                        
-                        if (!completed)
-                        {
-                            // Process timed out, kill it
-                            try
+                            else
                             {
-                                process.Kill(true);
-                                UpdateDebugOutput($"Reality Capture process for {folderName} timed out after 1 hour and was terminated.");
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] No PNG or JPEG images found in {folderName}");
                                 failedFolders++;
+                                continue;
                             }
-                            catch (Exception ex)
+                            
+                            // Main algorithm options
+                            arguments += " -selectAllImages"
+                             + $" -save \"{projectFile}\""
+                             + " -align"
+                             + $" -save \"{projectFile}\""
+                             + " -selectMaximalComponent"
+                             + " -setReconstructionRegionAuto"
+                             + " -calculateHighModel"
+                             + " -selectMarginalTriangles"
+                             + " -removeSelectedTriangles"
+                             + " -selectLargestModelComponent"
+                             + " -invertTrianglesSelection"
+                             + " -removeSelectedTriangles"
+                             + " -renameSelectedModel HP"
+                             + " -selectModel HP"
+                             + $" -save \"{projectFile}\""
+                             + " -quit";
+
+                            // Start the Reality Capture process
+                            using var process = new Process
                             {
-                                UpdateDebugOutput($"Failed to terminate Reality Capture process: {ex.Message}");
+                                StartInfo = new ProcessStartInfo
+                                {
+                                    FileName = realityCaptureExe,
+                                    Arguments = arguments,
+                                    UseShellExecute = false,
+                                    RedirectStandardOutput = true,
+                                    RedirectStandardError = true,
+                                    CreateNoWindow = true
+                                }
+                            };
+
+                                // Log the command
+                                UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Running command: {realityCaptureExe} {arguments}");
+
+                                process.OutputDataReceived += (sender, e) =>
+                                {
+                                    if (!string.IsNullOrEmpty(e.Data))
+                                    {
+                                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] RC: {e.Data}");
+                                    }
+                                };
+
+                                process.ErrorDataReceived += (sender, e) =>
+                                {
+                                    if (!string.IsNullOrEmpty(e.Data))
+                                    {
+                                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] RC Error: {e.Data}");
+                                    }
+                                };
+
+                                _runningProcesses[_nodeService.CurrentNode.Id] = process;
+                                process.Start();
+                                process.BeginOutputReadLine();
+                                process.BeginErrorReadLine();
+
+                                    // Wait for the process to complete with timeout
+                                    bool completed = await Task.Run(() => process.WaitForExit(60 * 60 * 1000), cancellationToken); // 1 hour timeout
+                                    
+                                    if (!completed)
+                                    {
+                                        // Process timed out, kill it
+                                        try
+                                        {
+                                            process.Kill(true);
+                                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Reality Capture process for {folderName} timed out after 1 hour and was terminated.");
+                                            failedFolders++;
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Failed to terminate Reality Capture process: {ex.Message}");
+                                        }
+                                    }
+                                    else if (process.ExitCode != 0)
+                                    {
+                                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Reality Capture process exited with code {process.ExitCode}");
+                                        failedFolders++;
+                                    }
+                                    else
+                                    {
+                                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Successfully processed {folderName}");
+                                        successfulFolders++;
                             }
                         }
-                        else if (process.ExitCode != 0)
+                        finally
                         {
-                            UpdateDebugOutput($"Reality Capture process exited with code {process.ExitCode}");
-                            failedFolders++;
-                        }
-                        else
-                        {
-                            UpdateDebugOutput($"Successfully processed {folderName}");
-                            successfulFolders++;
+                            // Use the new helper method for releasing the lock
+                            await ReleaseFolderLockAsync(rootDir, _nodeService.CurrentNode.Id);
+                            _runningProcesses.TryRemove(_nodeService.CurrentNode.Id, out _); // Cleanup after exit
                         }
 
                         // Check for cancellation
@@ -1555,7 +2209,7 @@ namespace VCDevTool.Client.Services
                     }
                     catch (Exception ex)
                     {
-                        UpdateDebugOutput($"Error processing folder {rootDir}: {ex.Message}");
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error processing folder {rootDir}: {ex.Message}");
                         failedFolders++;
                     }
                 }
@@ -1569,7 +2223,7 @@ namespace VCDevTool.Client.Services
                     }
                     catch (Exception ex)
                     {
-                        UpdateDebugOutput($"Error cleaning up temp file: {ex.Message}");
+                        UpdateDebugOutput($"[{_nodeService.CurrentNode.Name}] Error cleaning up temp file: {ex.Message}");
                     }
                 }
 
@@ -1591,6 +2245,10 @@ namespace VCDevTool.Client.Services
                 {
                     resultMessage += $" ({failedFolders} failed)";
                 }
+                if (skippedFolders > 0)
+                {
+                    resultMessage += $", {skippedFolders} skipped (already being processed by other nodes)";
+                }
                 
                 await _apiClient.UpdateTaskStatusAsync(
                     task.Id,
@@ -1604,6 +2262,7 @@ namespace VCDevTool.Client.Services
             }
             catch (Exception ex)
             {
+                _runningProcesses.TryRemove(_nodeService.CurrentNode.Id, out _); // Cleanup on error
                 await _apiClient.UpdateTaskStatusAsync(
                     task.Id,
                     BatchTaskStatus.Failed,

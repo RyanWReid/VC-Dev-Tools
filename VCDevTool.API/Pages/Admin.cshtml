@@ -1,0 +1,170 @@
+@page
+@model VCDevTool.API.Pages.AdminModel
+@{
+    ViewData["Title"] = "Admin Dashboard";
+}
+
+<h1>Admin Dashboard</h1>
+
+@if (!string.IsNullOrEmpty(Model.StatusMessage))
+{
+    <div class="alert alert-info">
+        @Model.StatusMessage
+    </div>
+}
+
+<div>
+    <h2>Active File Locks</h2>
+    <div style="margin-bottom: 10px;">
+        <form method="post" asp-page-handler="ClearLocks" style="display: inline-block; margin-right: 10px;">
+            <button type="submit" class="btn btn-danger">Clear All Locks</button>
+        </form>
+        <form method="post" asp-page-handler="ClearOrphanedLocks" style="display: inline-block;">
+            <button type="submit" class="btn btn-warning">Clear Orphaned Locks</button>
+        </form>
+    </div>
+    <table border="1">
+        <thead>
+            <tr>
+                <th>File Path</th>
+                <th>Locking Node</th>
+                <th>Acquired At (UTC)</th>
+                <th>Last Updated (UTC)</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var l in Model.FileLocks)
+        {
+            <tr>
+                <td>@l.FilePath</td>
+                <td>@l.LockingNodeId</td>
+                <td>@l.AcquiredAt.ToString("u")</td>
+                <td>@l.LastUpdatedAt.ToString("u")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<div>
+    <h2>Tasks</h2>
+    <div style="margin-bottom: 10px;">
+        <form method="post" asp-page-handler="ClearTasks" style="display: inline-block; margin-right: 10px;">
+            <button type="submit" class="btn btn-warning">Clear Completed Tasks</button>
+        </form>
+        <form method="post" asp-page-handler="ClearAllTasks" style="display: inline-block;">
+            <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to delete ALL tasks? This cannot be undone.')">Delete ALL Tasks</button>
+        </form>
+    </div>
+    <table border="1">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Assigned Node</th>
+                <th>Created At</th>
+                <th>Started At</th>
+                <th>Completed At</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var t in Model.Tasks)
+        {
+            <tr>
+                <td>@t.Id</td>
+                <td>@t.Name</td>
+                <td>@t.Status</td>
+                <td>@t.AssignedNodeId</td>
+                <td>@t.CreatedAt.ToString("u")</td>
+                <td>@(t.StartedAt?.ToString("u") ?? "")</td>
+                <td>@(t.CompletedAt?.ToString("u") ?? "")</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<div>
+    <h2>Nodes</h2>
+    <table border="1">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>IP Address</th>
+                <th>Available</th>
+                <th>Last Heartbeat (UTC)</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var n in Model.Nodes)
+        {
+            <tr>
+                <td>@n.Id</td>
+                <td>@n.Name</td>
+                <td>@n.IpAddress</td>
+                <td>@n.IsAvailable</td>
+                <td>@n.LastHeartbeat.ToString("u")</td>
+                <td>
+                    <form method="post" asp-page-handler="DisconnectNode" asp-route-nodeId="@n.Id" style="margin: 0;">
+                        <button type="submit" class="btn btn-sm btn-danger">Disconnect</button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+<style>
+    .btn {
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    .btn-danger {
+        background-color: #dc3545;
+        color: white;
+        border: 1px solid #dc3545;
+    }
+    .btn-warning {
+        background-color: #ffc107;
+        color: black;
+        border: 1px solid #ffc107;
+    }
+    .btn-sm {
+        padding: 4px 8px;
+        font-size: 12px;
+    }
+    .alert {
+        padding: 12px;
+        margin-bottom: 20px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+    }
+    .alert-info {
+        background-color: #cce5ff;
+        border-color: #b8daff;
+        color: #004085;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+    }
+    th, td {
+        padding: 8px;
+        text-align: left;
+    }
+    form {
+        display: inline-block;
+    }
+</style>
+
+<script>
+    // Reload the page every 30 seconds instead of 5 for less disruption
+    setTimeout(function() { location.reload(); }, 30000);
+</script> 

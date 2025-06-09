@@ -1,0 +1,437 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Configuration>
+    <ViewDefinitions>
+        <!-- Task object formatting -->
+        <View>
+            <Name>VCDevTool.Task.TableView</Name>
+            <ViewSelectedBy>
+                <TypeName>VCDevTool.Task</TypeName>
+            </ViewSelectedBy>
+            <TableControl>
+                <TableHeaders>
+                    <TableColumnHeader>
+                        <Label>Id</Label>
+                        <Width>6</Width>
+                        <Alignment>Right</Alignment>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Type</Label>
+                        <Width>18</Width>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Status</Label>
+                        <Width>12</Width>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Priority</Label>
+                        <Width>8</Width>
+                        <Alignment>Center</Alignment>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Progress</Label>
+                        <Width>8</Width>
+                        <Alignment>Right</Alignment>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Node</Label>
+                        <Width>15</Width>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Created</Label>
+                        <Width>19</Width>
+                    </TableColumnHeader>
+                </TableHeaders>
+                <TableRowEntries>
+                    <TableRowEntry>
+                        <TableColumnItems>
+                            <TableColumnItem>
+                                <PropertyName>Id</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>Type</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <ScriptBlock>
+                                    switch ($_.Status) {
+                                        'Pending' { $Host.UI.RawUI.ForegroundColor = 'Yellow'; $_.Status }
+                                        'Running' { $Host.UI.RawUI.ForegroundColor = 'Cyan'; $_.Status }
+                                        'Completed' { $Host.UI.RawUI.ForegroundColor = 'Green'; $_.Status }
+                                        'Failed' { $Host.UI.RawUI.ForegroundColor = 'Red'; $_.Status }
+                                        'Cancelled' { $Host.UI.RawUI.ForegroundColor = 'Magenta'; $_.Status }
+                                        default { $_.Status }
+                                    }
+                                </ScriptBlock>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>Priority</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <ScriptBlock>
+                                    if ($_.Progress) { "$($_.Progress)%" } else { "-" }
+                                </ScriptBlock>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <ScriptBlock>
+                                    if ($_.AssignedNode) { $_.AssignedNode } else { "Unassigned" }
+                                </ScriptBlock>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <ScriptBlock>
+                                    $_.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                                </ScriptBlock>
+                            </TableColumnItem>
+                        </TableColumnItems>
+                    </TableRowEntry>
+                </TableRowEntries>
+            </TableControl>
+        </View>
+
+        <!-- Task object list view -->
+        <View>
+            <Name>VCDevTool.Task.ListView</Name>
+            <ViewSelectedBy>
+                <TypeName>VCDevTool.Task</TypeName>
+            </ViewSelectedBy>
+            <ListControl>
+                <ListEntries>
+                    <ListEntry>
+                        <ListItems>
+                            <ListItem>
+                                <Label>Task ID</Label>
+                                <PropertyName>Id</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Type</Label>
+                                <PropertyName>Type</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Status</Label>
+                                <PropertyName>Status</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Priority</Label>
+                                <PropertyName>Priority</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Progress</Label>
+                                <ScriptBlock>
+                                    if ($_.Progress) { "$($_.Progress)%" } else { "Not started" }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Assigned Node</Label>
+                                <ScriptBlock>
+                                    if ($_.AssignedNode) { $_.AssignedNode } else { "Unassigned" }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Created</Label>
+                                <ScriptBlock>
+                                    $_.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Started</Label>
+                                <ScriptBlock>
+                                    if ($_.StartedAt) { $_.StartedAt.ToString("yyyy-MM-dd HH:mm:ss") } else { "Not started" }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Completed</Label>
+                                <ScriptBlock>
+                                    if ($_.CompletedAt) { $_.CompletedAt.ToString("yyyy-MM-dd HH:mm:ss") } else { "Not completed" }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Duration</Label>
+                                <ScriptBlock>
+                                    if ($_.ActualDuration) { 
+                                        $duration = [TimeSpan]::Parse($_.ActualDuration)
+                                        if ($duration.TotalDays -ge 1) {
+                                            $duration.ToString("d\.hh\:mm\:ss")
+                                        } else {
+                                            $duration.ToString("hh\:mm\:ss")
+                                        }
+                                    } elseif ($_.EstimatedDuration) {
+                                        "Estimated: $($_.EstimatedDuration) min"
+                                    } else { 
+                                        "Unknown" 
+                                    }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Error</Label>
+                                <ScriptBlock>
+                                    if ($_.ErrorMessage) { $_.ErrorMessage } else { "None" }
+                                </ScriptBlock>
+                            </ListItem>
+                        </ListItems>
+                    </ListEntry>
+                </ListEntries>
+            </ListControl>
+        </View>
+
+        <!-- Node object formatting -->
+        <View>
+            <Name>VCDevTool.Node.TableView</Name>
+            <ViewSelectedBy>
+                <TypeName>VCDevTool.Node</TypeName>
+            </ViewSelectedBy>
+            <TableControl>
+                <TableHeaders>
+                    <TableColumnHeader>
+                        <Label>Id</Label>
+                        <Width>6</Width>
+                        <Alignment>Right</Alignment>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Name</Label>
+                        <Width>20</Width>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Status</Label>
+                        <Width>10</Width>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Online</Label>
+                        <Width>8</Width>
+                        <Alignment>Center</Alignment>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Active</Label>
+                        <Width>8</Width>
+                        <Alignment>Right</Alignment>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Completed</Label>
+                        <Width>10</Width>
+                        <Alignment>Right</Alignment>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>Last Seen</Label>
+                        <Width>19</Width>
+                    </TableColumnHeader>
+                </TableHeaders>
+                <TableRowEntries>
+                    <TableRowEntry>
+                        <TableColumnItems>
+                            <TableColumnItem>
+                                <PropertyName>Id</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>Name</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>Status</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <ScriptBlock>
+                                    if ($_.IsOnline) { 
+                                        $Host.UI.RawUI.ForegroundColor = 'Green'; "Yes" 
+                                    } else { 
+                                        $Host.UI.RawUI.ForegroundColor = 'Red'; "No" 
+                                    }
+                                </ScriptBlock>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>ActiveTasks</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>CompletedTasks</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <ScriptBlock>
+                                    if ($_.LastSeen) { 
+                                        $_.LastSeen.ToString("yyyy-MM-dd HH:mm:ss") 
+                                    } else { 
+                                        "Never" 
+                                    }
+                                </ScriptBlock>
+                            </TableColumnItem>
+                        </TableColumnItems>
+                    </TableRowEntry>
+                </TableRowEntries>
+            </TableControl>
+        </View>
+
+        <!-- Node object list view -->
+        <View>
+            <Name>VCDevTool.Node.ListView</Name>
+            <ViewSelectedBy>
+                <TypeName>VCDevTool.Node</TypeName>
+            </ViewSelectedBy>
+            <ListControl>
+                <ListEntries>
+                    <ListEntry>
+                        <ListItems>
+                            <ListItem>
+                                <Label>Node ID</Label>
+                                <PropertyName>Id</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Name</Label>
+                                <PropertyName>Name</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Machine Name</Label>
+                                <PropertyName>MachineName</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Status</Label>
+                                <PropertyName>Status</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Online</Label>
+                                <ScriptBlock>
+                                    if ($_.IsOnline) { "Yes" } else { "No" }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Version</Label>
+                                <PropertyName>Version</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Platform</Label>
+                                <ScriptBlock>
+                                    "$($_.Platform) ($($_.Architecture))"
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>User</Label>
+                                <PropertyName>UserName</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Process ID</Label>
+                                <PropertyName>ProcessId</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Active Tasks</Label>
+                                <PropertyName>ActiveTasks</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Completed Tasks</Label>
+                                <PropertyName>CompletedTasks</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Failed Tasks</Label>
+                                <PropertyName>FailedTasks</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Last Seen</Label>
+                                <ScriptBlock>
+                                    if ($_.LastSeen) { 
+                                        $_.LastSeen.ToString("yyyy-MM-dd HH:mm:ss") 
+                                    } else { 
+                                        "Never" 
+                                    }
+                                </ScriptBlock>
+                            </ListItem>
+                        </ListItems>
+                    </ListEntry>
+                </ListEntries>
+            </ListControl>
+        </View>
+
+        <!-- Configuration object formatting -->
+        <View>
+            <Name>VCDevTool.Configuration.ListView</Name>
+            <ViewSelectedBy>
+                <TypeName>VCDevTool.Configuration</TypeName>
+            </ViewSelectedBy>
+            <ListControl>
+                <ListEntries>
+                    <ListEntry>
+                        <ListItems>
+                            <ListItem>
+                                <Label>Module Version</Label>
+                                <PropertyName>ModuleVersion</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Default API Endpoint</Label>
+                                <PropertyName>DefaultApiEndpoint</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Default Timeout</Label>
+                                <ScriptBlock>
+                                    "$($_.DefaultTimeout) seconds"
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Retry Attempts</Label>
+                                <PropertyName>RetryAttempts</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Logging Enabled</Label>
+                                <PropertyName>EnableLogging</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Log Level</Label>
+                                <PropertyName>LogLevel</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Config Path</Label>
+                                <PropertyName>ConfigPath</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Current Connection</Label>
+                                <ScriptBlock>
+                                    if ($_.CurrentConnection) {
+                                        "$($_.CurrentConnection.ApiEndpoint) (Connected: $($_.CurrentConnection.IsConnected))"
+                                    } else {
+                                        "Not connected"
+                                    }
+                                </ScriptBlock>
+                            </ListItem>
+                        </ListItems>
+                    </ListEntry>
+                </ListEntries>
+            </ListControl>
+        </View>
+
+        <!-- Version info formatting -->
+        <View>
+            <Name>VCDevTool.VersionInfo.ListView</Name>
+            <ViewSelectedBy>
+                <TypeName>VCDevTool.VersionInfo</TypeName>
+            </ViewSelectedBy>
+            <ListControl>
+                <ListEntries>
+                    <ListEntry>
+                        <ListItems>
+                            <ListItem>
+                                <Label>PowerShell Module Version</Label>
+                                <PropertyName>PowerShellModule</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Module Path</Label>
+                                <PropertyName>ModulePath</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>API Endpoint</Label>
+                                <PropertyName>ApiEndpoint</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Server Version</Label>
+                                <ScriptBlock>
+                                    if ($_.ServerVersion) { $_.ServerVersion } else { "Not connected" }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Server Build Date</Label>
+                                <ScriptBlock>
+                                    if ($_.ServerBuildDate) { $_.ServerBuildDate } else { "Not available" }
+                                </ScriptBlock>
+                            </ListItem>
+                            <ListItem>
+                                <Label>Server Environment</Label>
+                                <ScriptBlock>
+                                    if ($_.ServerEnvironment) { $_.ServerEnvironment } else { "Not available" }
+                                </ScriptBlock>
+                            </ListItem>
+                        </ListItems>
+                    </ListEntry>
+                </ListEntries>
+            </ListControl>
+        </View>
+    </ViewDefinitions>
+</Configuration> 

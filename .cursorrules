@@ -1,0 +1,241 @@
+# VC-Dev-Tool Cursor Rules & MCP Knowledge Graph Integration
+
+## 🎯 Primary Directives
+
+You are working on the VC-Dev-Tool project, a distributed file processing and task management system. Your primary responsibilities include:
+
+1. **ALWAYS** update the MCP Knowledge Graph when making any architectural or significant code changes
+2. **ENFORCE** all security rules and development standards outlined in DEVELOPMENT_RULES_AND_STANDARDS.md
+3. **REFERENCE** existing patterns and decisions from the knowledge graph before implementing new features
+4. **SUGGEST** knowledge graph updates when you detect gaps or inconsistencies
+
+## 🔒 Security-First Development
+
+### Critical Security Requirements
+- **NEVER** commit secrets, API keys, or passwords to code
+- **ALWAYS** use environment variables for sensitive configuration
+- **VALIDATE** all user inputs server-side with FluentValidation
+- **IMPLEMENT** proper authentication and authorization for all endpoints
+- **USE** parameterized queries or EF Core methods (never string concatenation)
+- **APPLY** rate limiting and CORS restrictions appropriately
+
+### Security Validation Checklist
+Before suggesting any code changes, verify:
+- [ ] No hardcoded secrets or credentials
+- [ ] Proper input validation and sanitization
+- [ ] Authentication/authorization requirements met
+- [ ] SQL injection and XSS prevention implemented
+- [ ] Error handling doesn't expose sensitive information
+
+## 📊 MCP Knowledge Graph Maintenance
+
+### Automatic Knowledge Graph Updates
+When making changes to:
+- **Architecture**: Update design patterns, data flow diagrams, dependency maps
+- **Security**: Update threat models, authentication flows, authorization policies  
+- **APIs**: Update contract documentation, request/response models, error codes
+- **Database**: Update schema documentation, index strategies, migration notes
+- **Configuration**: Update environment variable documentation, deployment requirements
+
+### Knowledge Graph Entry Template
+For each significant change, create or update knowledge graph entries using this structure:
+
+```markdown
+## Knowledge Graph Entry: [Component/Feature Name]
+
+### Context
+- **Purpose**: [What problem this solves]
+- **Scope**: [System areas affected]
+- **Dependencies**: [Related components]
+
+### Architecture
+- **Design Pattern**: [Repository/Service/Factory/etc.]
+- **Data Flow**: [How information moves]
+- **Security Model**: [Auth/AuthZ requirements]
+
+### Implementation
+- **Key Classes**: [Main classes and interfaces]
+- **Database Schema**: [Tables/indexes]
+- **Configuration**: [Required settings]
+
+### Decisions & Rationale
+- **Trade-offs**: [Alternatives considered]
+- **Performance**: [Impact and optimizations]
+- **Security**: [Threat model and mitigations]
+
+### Testing Strategy
+- **Unit Tests**: [Scenarios covered]
+- **Integration Tests**: [End-to-end workflows]
+- **Security Tests**: [Penetration testing]
+
+### Operations
+- **Metrics**: [What to monitor]
+- **Alerts**: [When to notify operators]
+- **Troubleshooting**: [Common issues]
+```
+
+## 🏗️ Architecture Enforcement
+
+### Service Design Standards
+- **Maximum 300 lines** per service class
+- **Single Responsibility Principle** - one concern per service
+- **Interface-based** dependency injection
+- **Result pattern** for operations that can fail
+- **Async/await** for all I/O operations
+
+### Database Standards
+- **Optimistic concurrency** for critical operations
+- **Proper transaction boundaries** with appropriate isolation levels
+- **Pagination** for all list operations
+- **AsNoTracking()** for read-only queries
+- **Proper indexing** strategy documented in knowledge graph
+
+### Error Handling Standards
+```csharp
+// ✅ CORRECT: Use Result pattern
+public async Task<Result<BatchTask>> GetTaskByIdAsync(int taskId)
+{
+    var task = await _context.Tasks.FindAsync(taskId);
+    return task != null 
+        ? Result<BatchTask>.Success(task)
+        : Result<BatchTask>.Failure("Task not found");
+}
+
+// ❌ WRONG: Inconsistent error handling
+public async Task<BatchTask> GetTaskByIdAsync(int taskId)
+{
+    return await _context.Tasks.FindAsync(taskId) ?? new BatchTask { Id = -1 };
+}
+```
+
+## 🔄 Concurrency & Race Condition Prevention
+
+### Critical Operations Requiring Special Attention
+1. **Node Registration** - Use serializable transactions
+2. **File Locking** - Implement distributed locking with Redis
+3. **Task Assignment** - Prevent multiple nodes processing same task
+4. **Database Updates** - Use optimistic concurrency with row versioning
+
+### Transaction Template
+```csharp
+using var transaction = await _context.Database
+    .BeginTransactionAsync(IsolationLevel.Serializable);
+try
+{
+    // Critical section code
+    await transaction.CommitAsync();
+}
+catch (DbUpdateConcurrencyException ex)
+{
+    await transaction.RollbackAsync();
+    _logger.LogWarning("Concurrency conflict: {Message}", ex.Message);
+    return Result<T>.Failure("Resource was modified by another user");
+}
+```
+
+## 📝 Code Generation Guidelines
+
+### When Generating New Code
+1. **Check knowledge graph** for existing patterns and standards
+2. **Follow established conventions** documented in the project
+3. **Include proper validation** using FluentValidation
+4. **Add comprehensive logging** with correlation IDs
+5. **Implement proper error handling** using Result pattern
+6. **Add unit tests** following existing test patterns
+7. **Update knowledge graph** with new patterns or decisions
+
+### Code Quality Standards
+- **80% minimum code coverage** for new code
+- **XML documentation** for all public APIs
+- **Descriptive naming** following C# conventions
+- **Maximum 10 cyclomatic complexity** per method
+- **Proper disposal** of resources (using statements)
+
+## 🚀 Deployment & Operations
+
+### Configuration Management
+- **Environment variables** for all secrets and environment-specific settings
+- **Validation** of required configuration at startup
+- **Documentation** of all configuration options in knowledge graph
+
+### Monitoring & Observability
+- **Structured logging** with Serilog and correlation IDs
+- **Health checks** for all dependencies
+- **Performance metrics** for critical operations
+- **Security audit trails** for sensitive operations
+
+## 📋 Pre-Code-Change Checklist
+
+Before making any code changes, ask yourself:
+- [ ] Have I checked the knowledge graph for existing patterns?
+- [ ] Does this change follow established architectural decisions?
+- [ ] Are there security implications that need to be addressed?
+- [ ] Will this change require knowledge graph updates?
+- [ ] Have I considered concurrency and race condition implications?
+- [ ] Does this follow the established error handling patterns?
+- [ ] Are proper tests included?
+- [ ] Is performance impact considered and documented?
+
+## 🔍 Code Review Integration
+
+### Automatically Check For
+- Security vulnerabilities and exposed secrets
+- Proper input validation and error handling
+- Concurrency safety and transaction management
+- Performance implications and optimization opportunities
+- Compliance with established patterns in knowledge graph
+- Documentation and knowledge graph update requirements
+
+### Suggest Improvements For
+- Code that violates Single Responsibility Principle
+- Missing or inadequate error handling
+- Performance bottlenecks or inefficient queries
+- Security weaknesses or compliance gaps
+- Missing documentation or knowledge graph entries
+
+## 📚 Knowledge Graph Categories
+
+Maintain these categories in the MCP Knowledge Graph:
+
+### Architecture
+- Service patterns and interfaces
+- Data flow diagrams
+- Dependency relationships
+- Design decisions and rationale
+
+### Security
+- Threat models and mitigations
+- Authentication/authorization flows
+- Input validation strategies
+- Security testing approaches
+
+### Performance
+- Database optimization strategies
+- Caching patterns and policies
+- Scalability considerations
+- Performance monitoring setup
+
+### Operations
+- Deployment procedures
+- Monitoring and alerting setup
+- Troubleshooting guides
+- Configuration management
+
+### Testing
+- Testing strategies and patterns
+- Mock and stub patterns
+- Integration test scenarios
+- Security test approaches
+
+---
+
+## ⚡ Quick Reference Commands
+
+When I ask you to:
+- **"Add feature X"**: Check knowledge graph → Follow patterns → Update graph
+- **"Fix security issue"**: Apply security rules → Validate thoroughly → Document
+- **"Optimize performance"**: Check existing optimizations → Measure impact → Update docs
+- **"Review code"**: Security scan → Pattern compliance → Knowledge graph updates
+- **"Debug issue"**: Check troubleshooting guides → Follow investigation patterns
+
+Remember: The knowledge graph is the single source of truth for architectural decisions, patterns, and operational procedures. Always consult it first and keep it updated. 

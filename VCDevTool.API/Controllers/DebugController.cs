@@ -11,7 +11,7 @@ namespace VCDevTool.API.Controllers
 
         public DebugController(DebugBroadcastService debugBroadcastService)
         {
-            _debugBroadcastService = debugBroadcastService;
+            _debugBroadcastService = debugBroadcastService; 
         }
 
         [HttpPost("send")]

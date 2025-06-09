@@ -1,0 +1,2253 @@
+<Window x:Class="VCDevTool.Client.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:VCDevTool.Client"
+        xmlns:viewmodels="clr-namespace:VCDevTool.Client.ViewModels"
+        xmlns:converters="clr-namespace:VCDevTool.Client.Converters"
+        xmlns:system="clr-namespace:System;assembly=mscorlib"
+        mc:Ignorable="d"
+        Title="VC Dev Tool" Height="720" Width="1080"
+        Background="#252526"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        BorderThickness="1"
+        BorderBrush="#333333"
+        ResizeMode="CanResizeWithGrip">
+    
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <converters:ProgressConverter x:Key="ProgressConverter" />
+        <converters:SelectedNodeBorderConverter x:Key="SelectedNodeBorderConverter" />
+        <converters:BooleanToColorConverter x:Key="BooleanToColorConverter" />
+        <converters:BooleanToAlignmentConverter x:Key="BooleanToAlignmentConverter" />
+        <converters:BooleanToMarginConverter x:Key="BooleanToMarginConverter" />
+        <converters:WidthPercentageConverter x:Key="WidthPercentageConverter" />
+        
+        <!-- Added converters -->
+        <converters:BooleanToStringConverter x:Key="BooleanToStringConverter" />
+        <converters:InverseBooleanConverter x:Key="InverseBooleanConverter" />
+        <converters:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+        <converters:EmptyStringToVisibilityConverter x:Key="EmptyStringToVisibilityConverter" />
+        <converters:EnumBooleanConverter x:Key="EnumBooleanConverter" />
+        <converters:ZeroIntToVisibilityConverter x:Key="ZeroIntToVisibilityConverter" />
+        
+        <!-- New converter for arrow rotation -->
+        <local:BooleanToRotationConverter x:Key="BooleanToRotationConverter" />
+        
+        <!-- Styles -->
+        <Style x:Key="NodeBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="#252526" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+            
+        <!-- Filter Button Style -->
+        <Style x:Key="FilterButtonStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="#AAAAAA" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter Property="Background" Value="#3F3F46" TargetName="border" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#454549" TargetName="border" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Icon Button Style -->
+        <Style x:Key="IconButtonStyle" TargetType="Button">
+            <Setter Property="Foreground" Value="#AAAAAA" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" 
+                                BorderBrush="{TemplateBinding BorderBrush}" 
+                                BorderThickness="{TemplateBinding BorderThickness}" 
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#3F3F46" TargetName="border" />
+                                <Setter Property="Foreground" Value="#FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#454549" TargetName="border" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <Style TargetType="Button" x:Key="ActionButton">
+            <Setter Property="Background" Value="#3E3E42" />
+            <Setter Property="Foreground" Value="#F0F0F0" />
+            <Setter Property="Padding" Value="20,12" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" 
+                                CornerRadius="6" 
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#4F4F53" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.5" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- Blue Action Button Style -->
+        <Style TargetType="Button" x:Key="BlueActionButton" BasedOn="{StaticResource ActionButton}">
+            <Setter Property="Background" Value="#007ACC" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#1C97EA" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#007ACC" />
+                    <Setter Property="Opacity" Value="0.5" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- ComboBox Style -->
+        <Style TargetType="ComboBox" x:Key="DarkComboBoxStyle">
+            <Setter Property="Background" Value="#3F3F46" />
+            <Setter Property="Foreground" Value="#F0F0F0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="Background" Value="#3F3F46" />
+                        <Setter Property="Foreground" Value="#F0F0F0" />
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#4F4F53" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#007ACC" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton 
+                                Name="ToggleButton" 
+                                ClickMode="Press"
+                                Focusable="false"
+                                IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                Background="#3F3F46">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Background="#3F3F46" BorderThickness="0">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter Grid.Column="0" Margin="{TemplateBinding Padding}"
+                                                                 Content="{TemplateBinding Content}"
+                                                                 ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                                 HorizontalAlignment="Left"
+                                                                 VerticalAlignment="Center" />
+                                                <Path Grid.Column="1" Name="Arrow" 
+                                                     Data="M0,0 L5,5 L10,0" 
+                                                     Fill="#F0F0F0" 
+                                                     Margin="0,0,8,0"
+                                                     VerticalAlignment="Center" 
+                                                     HorizontalAlignment="Right" />
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="true">
+                                                <Setter Property="Background" Value="#4F4F53" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                                <ContentPresenter Name="ContentSite"
+                                                Content="{TemplateBinding SelectionBoxItem}"
+                                                ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                VerticalAlignment="Center"
+                                                HorizontalAlignment="Left"
+                                                TextElement.Foreground="#F0F0F0"
+                                                Margin="{TemplateBinding Padding}" />
+                            </ToggleButton>
+                            <Popup 
+                                Name="Popup"
+                                Placement="Bottom"
+                                IsOpen="{TemplateBinding IsDropDownOpen}"
+                                AllowsTransparency="True"
+                                Focusable="False"
+                                PopupAnimation="Slide">
+                                <Grid Name="DropDown"
+                                     SnapsToDevicePixels="True"
+                                     MinWidth="{TemplateBinding ActualWidth}"
+                                     MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border 
+                                        x:Name="DropDownBorder"
+                                        Background="#3F3F46"
+                                        CornerRadius="0"
+                                        BorderThickness="0">
+                                        <ScrollViewer Margin="2" SnapsToDevicePixels="True">
+                                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <Style TargetType="TextBlock" x:Key="HeaderText">
+            <Setter Property="Foreground" Value="#F0F0F0" />
+            <Setter Property="FontSize" Value="24" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,20,0,30" />
+        </Style>
+        
+        <Style TargetType="TextBlock" x:Key="StatusText">
+            <Setter Property="Foreground" Value="#F0F0F0" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        
+        <!-- Progress bar style -->
+        <Style x:Key="ProgressBarStyle" TargetType="Border">
+            <Setter Property="Background" Value="#3F3F46" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Height" Value="12" />
+            <Setter Property="Width" Value="250" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        
+        <!-- Round Button Style -->
+        <Style x:Key="RoundButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#AAAAAA" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" 
+                                CornerRadius="16" 
+                                BorderThickness="1"
+                                BorderBrush="#444444"
+                                Width="32" Height="32">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3F3F46" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#4F4F53" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- Node border style -->
+        <Style x:Key="TaskCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="#2D2D30" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="MinHeight" Value="70" />
+            <Setter Property="Padding" Value="20,0" />
+        </Style>
+        
+        <!-- Toggle Switch Style -->
+        <Style x:Key="ToggleSwitch" TargetType="Border">
+            <Setter Property="Width" Value="80" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="CornerRadius" Value="20" />
+            <Setter Property="Background" Value="#3F3F46" />
+        </Style>
+        
+        <!-- Rounded Checkbox Style -->
+        <Style TargetType="CheckBox" x:Key="RoundedCheckBox">
+            <Setter Property="Foreground" Value="#F0F0F0" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Margin" Value="0,2,0,2" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <Border x:Name="Border" Grid.Column="0"
+                                  Width="18" Height="18" 
+                                  CornerRadius="4" 
+                                  Background="{TemplateBinding Background}"
+                                  BorderBrush="#666666"
+                                  BorderThickness="1"
+                                  VerticalAlignment="Center">
+                                <Path x:Name="CheckMark"
+                                     Width="10" Height="10"
+                                     Stroke="#F0F0F0"
+                                     StrokeThickness="2"
+                                     Data="M1,5 L4,8 L9,2"
+                                     Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Grid.Column="1" 
+                                             VerticalAlignment="{TemplateBinding VerticalContentAlignment}" 
+                                             HorizontalAlignment="Left"
+                                             Margin="8,0,0,0" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="true">
+                                <Setter TargetName="Border" Property="Background" Value="#3F3F46" />
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Border" Property="Opacity" Value="0.5" />
+                                <Setter Property="Foreground" Value="#888888" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Transparent Button Style -->
+        <Style x:Key="TransparentButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#CCCCCC" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3F3F46" />
+                    <Setter Property="Foreground" Value="White" />
+                    <Setter Property="Cursor" Value="Hand" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+        <!-- Square Button with Rounded Corners Style -->
+        <Style x:Key="SquareRoundedButton" TargetType="Button">
+            <Setter Property="Background" Value="#007ACC" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" 
+                                CornerRadius="8" 
+                                BorderThickness="0"
+                                Width="{TemplateBinding Width}" 
+                                Height="{TemplateBinding Height}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#1C97EA" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#0062A3" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        
+
+
+
+        
+        <!-- Style for node items in the node list -->
+        <Style x:Key="NodeItemStyle" TargetType="Border">
+            <Setter Property="Background" Value="#252526" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="MaxHeight" Value="46" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="Padding" Value="16,0" />
+        </Style>
+    </Window.Resources>
+    
+    <Window.DataContext>
+        <viewmodels:MainViewModel />
+    </Window.DataContext>
+    
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        
+        <!-- Sidebar -->
+        <Grid Grid.Column="0" Background="#1E1E1E">
+            <StackPanel Margin="30,40">
+                <!-- Main Page / Network Icon -->
+                <Border Background="Transparent" Cursor="Hand" Margin="0,0,0,40" ToolTip="Network">
+                    <Border.InputBindings>
+                        <MouseBinding MouseAction="LeftClick" Command="{Binding CloseAllViewsCommand}" />
+                    </Border.InputBindings>
+                    <TextBlock Text="&#xE80F;" FontFamily="Segoe MDL2 Assets" FontSize="36" Foreground="#666666" HorizontalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSettingsDialogOpen}" Value="False">
+                                        <Setter Property="Foreground" Value="#F0F0F0"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Border>
+                
+                <!-- Settings Icon -->
+                <Border Background="Transparent" Cursor="Hand" Margin="0,0,0,40" ToolTip="Settings">
+                    <Border.InputBindings>
+                        <MouseBinding MouseAction="LeftClick" Command="{Binding OpenSettingsDialogCommand}" />
+                    </Border.InputBindings>
+                    <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="36" Foreground="#666666" HorizontalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSettingsDialogOpen}" Value="True">
+                                        <Setter Property="Foreground" Value="#F0F0F0"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Border>
+                
+                <!-- Material Scanner Icon -->
+                <Border Background="Transparent" Cursor="Hand" Margin="0,0,0,40" ToolTip="Material Scanner">
+                    <Border.InputBindings>
+                        <MouseBinding MouseAction="LeftClick" Command="{Binding OpenMaterialScannerCommand}" />
+                    </Border.InputBindings>
+                    <TextBlock Text="&#xE8A9;" FontFamily="Segoe MDL2 Assets" FontSize="36" Foreground="#666666" HorizontalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMaterialScannerOpen}" Value="True">
+                                        <Setter Property="Foreground" Value="#F0F0F0"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Border>
+                
+                <!-- Watcher Icon -->
+                <Border Background="Transparent" Cursor="Hand" Margin="0,0,0,40" ToolTip="Watcher">
+                    <Border.InputBindings>
+                        <MouseBinding MouseAction="LeftClick" Command="{Binding OpenWatcherCommand}" />
+                    </Border.InputBindings>
+                    <Grid>
+                        <!-- Notification Dots - Simplified for smoother animation -->
+                        <Grid HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-3,0,0,0"
+                              Visibility="{Binding Watcher.HasUnsyncedChanges, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            
+                            <!-- Main dot with smooth pulse -->
+                            <Ellipse x:Name="NotificationDot" Width="10" Height="10" Fill="#FFCC00" 
+                                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Ellipse.RenderTransform>
+                                    <ScaleTransform CenterX="5" CenterY="5" ScaleX="1" ScaleY="1" />
+                                </Ellipse.RenderTransform>
+                                <Ellipse.Triggers>
+                                    <EventTrigger RoutedEvent="Ellipse.Loaded">
+                                        <BeginStoryboard>
+                                            <Storyboard RepeatBehavior="Forever">
+                                                <!-- Simple pulse effect -->
+                                                <DoubleAnimation 
+                                                    Storyboard.TargetProperty="(Ellipse.RenderTransform).(ScaleTransform.ScaleX)"
+                                                    From="0.9" To="1.2" Duration="0:0:1.2" 
+                                                    AutoReverse="True" />
+                                                <DoubleAnimation 
+                                                    Storyboard.TargetProperty="(Ellipse.RenderTransform).(ScaleTransform.ScaleY)"
+                                                    From="0.9" To="1.2" Duration="0:0:1.2" 
+                                                    AutoReverse="True" />
+                                                <!-- Slight opacity change for more subtlety -->
+                                                <DoubleAnimation 
+                                                    Storyboard.TargetProperty="Opacity"
+                                                    From="1" To="0.8" Duration="0:0:1.2" 
+                                                    AutoReverse="True" />
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </EventTrigger>
+                                </Ellipse.Triggers>
+                            </Ellipse>
+                        </Grid>
+                        
+                        <TextBlock Text="&#xE7B3;" FontFamily="Segoe MDL2 Assets" FontSize="36" Foreground="#666666" HorizontalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsWatcherOpen}" Value="True">
+                                            <Setter Property="Foreground" Value="#F0F0F0"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                </Border>
+            </StackPanel>
+            
+            <!-- Status and Version -->
+            <StackPanel VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,20">
+                <TextBlock Text="{Binding ActivationStatus}" Foreground="#666666" FontSize="12" 
+                           HorizontalAlignment="Center" Margin="0,0,0,10" />
+                
+                <!-- Toggle Switch -->
+                <Border Style="{StaticResource ToggleSwitch}" HorizontalAlignment="Center" Margin="0,0,0,20">
+                    <Border.Background>
+                        <SolidColorBrush Color="{Binding IsActivated, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#8B0000,#2E8B57'}" />
+                    </Border.Background>
+                    <Grid>
+                        <Ellipse Width="32" Height="32" Fill="White" 
+                                HorizontalAlignment="{Binding IsActivated, Converter={StaticResource BooleanToAlignmentConverter}}"
+                                Margin="{Binding IsActivated, Converter={StaticResource BooleanToMarginConverter}, ConverterParameter='4,0,0,0,44,0,0,0'}"
+                                VerticalAlignment="Center" />
+                        <Border Background="Transparent" Cursor="Hand">
+                            <Border.InputBindings>
+                                <MouseBinding MouseAction="LeftClick" Command="{Binding ToggleActivationCommand}" />
+                            </Border.InputBindings>
+                        </Border>
+                    </Grid>
+                </Border>
+                
+                <TextBlock Text="V2025.3.4" Foreground="#666666" FontSize="12" 
+                           HorizontalAlignment="Center" Margin="0,0,0,0" />
+            </StackPanel>
+        </Grid>
+        
+        <!-- Main Content -->
+        <Grid Grid.Column="1" Margin="40">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            
+            <!-- Window Controls -->
+            <Grid x:Name="WindowControls" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-25,10,0">
+                <StackPanel Orientation="Horizontal" Margin="10,0,0,0">
+                    <Button Content="—" Width="30" Height="25" Click="MinimizeButton_Click" Background="Transparent" Foreground="#CCCCCC" BorderThickness="0" />
+                    <Button Content="?" Width="30" Height="25" Click="MaximizeButton_Click" Background="Transparent" Foreground="#CCCCCC" BorderThickness="0" />
+                    <Button Content="?" Width="30" Height="25" Click="CloseButton_Click" Background="Transparent" Foreground="#CCCCCC" BorderThickness="0">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="Background" Value="Transparent" />
+                                <Setter Property="BorderThickness" Value="0" />
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#E81123" />
+                                        <Setter Property="Foreground" Value="White" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Network Page - Only show when settings is not visible -->
+            <Grid Grid.Row="0" Grid.RowSpan="3">
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSettingsDialogOpen}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                
+                <!-- Header -->
+                <TextBlock Grid.Row="0" Text="NETWORK DASHBOARD" Style="{StaticResource HeaderText}" />
+                
+                <!-- Dashboard Content -->
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    
+                    <!-- PC Nodes List -->
+                    <Grid Grid.Column="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        
+                        <TextBlock Grid.Row="0" Text="NETWORK NODES" Foreground="#AAAAAA" 
+                                   FontSize="18" FontWeight="SemiBold" Margin="0,0,0,15" />
+                        
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding Nodes}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource NodeItemStyle}" Cursor="Hand" MaxHeight="46" Margin="0,0,0,6" Padding="16,0">
+                                            <Border.InputBindings>
+                                                <MouseBinding MouseAction="LeftClick" Command="{Binding DataContext.ShowNodeDetailsCommand, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type Window}}}" CommandParameter="{Binding}" />
+                                            </Border.InputBindings>
+                                            <Grid VerticalAlignment="Center" Height="46">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" /> <!-- Status indicator -->
+                                                    <ColumnDefinition Width="*" /> <!-- Name -->
+                                                    <ColumnDefinition Width="Auto" /> <!-- Info icon -->
+                                                </Grid.ColumnDefinitions>
+
+                                                <!-- Status Indicator -->
+                                                <Ellipse Grid.Column="0" Width="10" Height="10" Margin="0,0,12,0" VerticalAlignment="Center"
+                                                         Fill="{Binding StatusColor}" />
+                                                
+                                                <!-- PC Name -->
+                                                <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="#F0F0F0" 
+                                                           FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+
+                                                <!-- Info Icon -->
+                                                <TextBlock Grid.Column="2" Text="&#xE946;" FontFamily="Segoe MDL2 Assets" 
+                                                          FontSize="14" Foreground="#AAAAAA" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+                    
+                    <!-- Vertical Line Separator -->
+                    <Rectangle Grid.Column="1" Width="1" Margin="20,0" Fill="#444444" VerticalAlignment="Stretch" />
+                    
+                    <!-- Tasks List -->
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        
+                        <TextBlock Grid.Row="0" Text="TASKS" Foreground="#AAAAAA" 
+                                  FontSize="18" FontWeight="SemiBold" Margin="0,0,0,15" />
+                        
+                        <!-- Filter Controls -->
+                        <Grid Grid.Row="1" Margin="0,0,0,15">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            
+                            <!-- Filter Buttons -->
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                                <RadioButton Content="ALL" IsChecked="{Binding SelectedTaskFilter, Converter={StaticResource EnumBooleanConverter}, ConverterParameter={x:Static local:MainViewModel+TaskFilterType.All}}"
+                                             Command="{Binding SetTaskFilterCommand}" CommandParameter="{x:Static local:MainViewModel+TaskFilterType.All}"
+                                             Style="{StaticResource FilterButtonStyle}" Margin="0,0,8,0" />
+                                             
+                                <RadioButton Content="ACTIVE" IsChecked="{Binding SelectedTaskFilter, Converter={StaticResource EnumBooleanConverter}, ConverterParameter={x:Static local:MainViewModel+TaskFilterType.Active}}"
+                                             Command="{Binding SetTaskFilterCommand}" CommandParameter="{x:Static local:MainViewModel+TaskFilterType.Active}"
+                                             Style="{StaticResource FilterButtonStyle}" Margin="0,0,8,0" />
+                                             
+                                <RadioButton Content="COMPLETED" IsChecked="{Binding SelectedTaskFilter, Converter={StaticResource EnumBooleanConverter}, ConverterParameter={x:Static local:MainViewModel+TaskFilterType.Completed}}"
+                                             Command="{Binding SetTaskFilterCommand}" CommandParameter="{x:Static local:MainViewModel+TaskFilterType.Completed}"
+                                             Style="{StaticResource FilterButtonStyle}" Margin="0,0,8,0" />
+                                             
+                                <RadioButton Content="FAILED" IsChecked="{Binding SelectedTaskFilter, Converter={StaticResource EnumBooleanConverter}, ConverterParameter={x:Static local:MainViewModel+TaskFilterType.Failed}}"
+                                             Command="{Binding SetTaskFilterCommand}" CommandParameter="{x:Static local:MainViewModel+TaskFilterType.Failed}"
+                                             Style="{StaticResource FilterButtonStyle}" Margin="0,0,8,0" />
+                                             
+                                <RadioButton Content="TODAY" IsChecked="{Binding SelectedTaskFilter, Converter={StaticResource EnumBooleanConverter}, ConverterParameter={x:Static local:MainViewModel+TaskFilterType.Today}}"
+                                             Command="{Binding SetTaskFilterCommand}" CommandParameter="{x:Static local:MainViewModel+TaskFilterType.Today}"
+                                             Style="{StaticResource FilterButtonStyle}" Margin="0,0,8,0" />
+                                             
+                                <RadioButton Content="THIS WEEK" IsChecked="{Binding SelectedTaskFilter, Converter={StaticResource EnumBooleanConverter}, ConverterParameter={x:Static local:MainViewModel+TaskFilterType.ThisWeek}}"
+                                             Command="{Binding SetTaskFilterCommand}" CommandParameter="{x:Static local:MainViewModel+TaskFilterType.ThisWeek}"
+                                             Style="{StaticResource FilterButtonStyle}" />
+                            </StackPanel>
+                            
+                            <!-- Search Box -->
+                            <Grid Grid.Row="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                
+                                <Border Grid.Column="0" Background="#3F3F46" CornerRadius="4">
+                                    <Grid>
+                                        <TextBox Text="{Binding TaskSearchText, UpdateSourceTrigger=PropertyChanged}" 
+                                                 Background="Transparent" Foreground="#F0F0F0" 
+                                                 BorderThickness="0" Padding="10,8" />
+                                        
+                                        <TextBlock Text="Search tasks..." Foreground="#888888" Margin="10,8,0,0"
+                                                   Visibility="{Binding TaskSearchText, Converter={StaticResource EmptyStringToVisibilityConverter}}" />
+                                    </Grid>
+                                </Border>
+                                
+                                <Button Grid.Column="1" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" 
+                                        Command="{Binding ClearTaskSearchCommand}"
+                                        Visibility="{Binding TaskSearchText, Converter={StaticResource StringToVisibilityConverter}}"
+                                        Style="{StaticResource IconButtonStyle}" Margin="8,0,0,0" />
+                            </Grid>
+                        </Grid>
+                        
+                        <!-- Task List -->
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding FilteredTasks}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border MaxHeight="70" Margin="0,0,0,6" Padding="16,12" Cursor="Hand">
+                                            <Border.Style>
+                                                <Style TargetType="Border" BasedOn="{StaticResource TaskCardStyle}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsCompleted}" Value="True">
+                                                            <Setter Property="Opacity" Value="0.85" />
+                                                            <Setter Property="Background" Value="#2A2A30" />
+                                                            <Setter Property="BorderBrush" Value="#27fc2333" />
+                                                            <Setter Property="BorderThickness" Value="0,0,0,1" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsFailed}" Value="True">
+                                                            <Setter Property="Opacity" Value="0.85" />
+                                                            <Setter Property="Background" Value="#2D2A2A" />
+                                                            <Setter Property="BorderBrush" Value="#fc233233" />
+                                                            <Setter Property="BorderThickness" Value="0,0,0,1" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                    </Button.Style>
+                </Button>
+            </Grid>
+            
+            <!-- Settings Page -->
+            <Grid Grid.Row="0" Grid.RowSpan="3" Background="#252526" 
+                  Visibility="{Binding IsSettingsDialogOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                
+                <!-- Header without Close Button -->
+                <TextBlock Text="SETTINGS" Style="{StaticResource HeaderText}" />
+                
+                <!-- Settings Content -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <!-- Server Connection Section -->
+                        <TextBlock Text="SERVER CONNECTION" Foreground="#F0F0F0" 
+                                   FontSize="18" FontWeight="SemiBold" Margin="0,20,0,15" />
+                        
+                        <!-- Server Address Input -->
+                        <Grid Margin="0,0,0,40">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="SERVER URL:" Foreground="#F0F0F0" 
+                                       FontSize="14" VerticalAlignment="Center" Margin="0,0,15,0" />
+                            
+                            <Border Grid.Column="1" Background="#3F3F46">
+                                <TextBox Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}" 
+                                         Background="Transparent" Foreground="#F0F0F0" 
+                                         BorderThickness="0" Padding="10,8" />
+                            </Border>
+                            
+                            <Button Grid.Column="2" Content="Connect" Margin="10,0,0,0" Padding="15,8"
+                                    Command="{Binding ConnectToServerCommand}" 
+                                    Style="{StaticResource BlueActionButton}" />
+                        </Grid>
+                        
+                        <!-- Connection Status -->
+                        <TextBlock Text="{Binding ConnectionStatus}" Foreground="#F0F0F0" 
+                                   FontSize="14" Margin="0,0,0,30" TextWrapping="Wrap" 
+                                   Visibility="{Binding ConnectionStatus, Converter={StaticResource StringToVisibilityConverter}}" />
+                        
+                        <!-- Material Scanner Settings Section -->
+                        <TextBlock Text="MATERIAL SCANNER SETTINGS" Foreground="#F0F0F0" 
+                                   FontSize="18" FontWeight="SemiBold" Margin="0,0,0,15" />
+                        
+                        <!-- Scan Category Path Configuration -->
+                        <Grid Margin="0,0,0,40">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="SCAN CATEGORY PATH:" Foreground="#F0F0F0" 
+                                       FontSize="14" VerticalAlignment="Center" Margin="0,0,15,0" />
+                            
+                            <Border Grid.Column="1" Background="#3F3F46">
+                                <TextBox Text="{Binding ScanCategoryPath, UpdateSourceTrigger=PropertyChanged}" 
+                                         Background="Transparent" Foreground="#F0F0F0" 
+                                         BorderThickness="0" Padding="10,8" />
+                            </Border>
+                            
+                            <Button Grid.Column="2" Content="Browse" Margin="10,0,0,0" Padding="15,8"
+                                    Command="{Binding BrowseScanCategoryPathCommand}" 
+                                    Style="{StaticResource BlueActionButton}" />
+                        </Grid>
+                        
+                        <!-- Hotkey Configuration Section -->
+                        <TextBlock Text="HOTKEY CONFIGURATION" Foreground="#F0F0F0" 
+                                   FontSize="18" FontWeight="SemiBold" Margin="0,0,0,15" />
+                        
+                        <!-- Add Files Hotkey Configuration -->
+                        <Grid Margin="0,0,0,40">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="ADD FILES HOTKEY:" Foreground="#F0F0F0" 
+                                       FontSize="14" VerticalAlignment="Center" Margin="0,0,15,0" />
+                            
+                            <Border Grid.Column="1" Background="#3F3F46" Padding="10,8">
+                                <TextBlock Text="{Binding AddFilesHotkeyName}" Foreground="#F0F0F0"
+                                           VerticalAlignment="Center" TextAlignment="Center" 
+                                           FontWeight="{Binding IsWaitingForKeyPress, Converter={StaticResource BooleanToStringConverter}, ConverterParameter='Bold,Normal'}" />
+                            </Border>
+                            
+                            <Button Grid.Column="2" Content="{Binding IsWaitingForKeyPress, Converter={StaticResource BooleanToStringConverter}, ConverterParameter='Listening...,Configure'}" 
+                                    Margin="10,0,0,0" Padding="15,8"
+                                    Command="{Binding ConfigureHotkeyCommand}" 
+                                    Style="{StaticResource BlueActionButton}" 
+                                    IsEnabled="{Binding IsWaitingForKeyPress, Converter={StaticResource InverseBooleanConverter}}" />
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+            
+            <!-- Material Scanner Page -->
+            <Grid Grid.Row="0" Grid.RowSpan="3" Background="#252526" 
+                  Visibility="{Binding IsMaterialScannerOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                
+                <!-- Header -->
+                <TextBlock Grid.Row="0" Text="MATERIAL SCANNER" Style="{StaticResource HeaderText}" />
+                
+                <!-- Scanner Content -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="0,20,0,0" MaxWidth="700">
+                        <!-- Material Selection Form -->
+                        <Grid Margin="0,0,0,15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="Category Selection:" 
+                                       Foreground="#F0F0F0" FontSize="14" FontWeight="SemiBold" 
+                                       VerticalAlignment="Center" />
+                            
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding MaterialCategories}" 
+                                     SelectedItem="{Binding SelectedCategory}" 
+                                     Style="{StaticResource DarkComboBoxStyle}" />
+                        </Grid>
+                        
+                        <Grid Margin="0,0,0,15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="Mat_Name:" 
+                                       Foreground="#F0F0F0" FontSize="14" FontWeight="SemiBold" 
+                                       VerticalAlignment="Center" />
+                            
+                            <Grid Grid.Column="1">
+                                <TextBox x:Name="MaterialNameTextBox" 
+                                        Text="{Binding MaterialName, UpdateSourceTrigger=PropertyChanged}" 
+                                        Background="#3F3F46" Foreground="#F0F0F0" 
+                                        BorderThickness="0" Padding="10,8" />
+                                <TextBlock IsHitTestVisible="False" Text="Enter Material Name I.E: Stainless_Steel or Nylon_Webbing" 
+                                          Foreground="Gray" Margin="10,8,0,0"
+                                          Visibility="{Binding ElementName=MaterialNameTextBox, Path=Text.IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </Grid>
+                        </Grid>
+                        
+                        <Grid Margin="0,0,0,15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="Color Selection:" 
+                                       Foreground="#F0F0F0" FontSize="14" FontWeight="SemiBold" 
+                                       VerticalAlignment="Center" />
+                            
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding ColorOptions}" 
+                                     SelectedItem="{Binding SelectedColor}" 
+                                     Style="{StaticResource DarkComboBoxStyle}" />
+                        </Grid>
+                        
+                        <Grid Margin="0,0,0,15">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="Wear LVL Selection:" 
+                                       Foreground="#F0F0F0" FontSize="14" FontWeight="SemiBold" 
+                                       VerticalAlignment="Center" />
+                            
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding WearLevelOptions}" 
+                                     SelectedItem="{Binding SelectedWearLevel}" 
+                                     Style="{StaticResource DarkComboBoxStyle}" />
+                        </Grid>
+                        
+                        <Grid Margin="0,0,0,30">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="Roughness LVL Selection:" 
+                                       Foreground="#F0F0F0" FontSize="14" FontWeight="SemiBold" 
+                                       VerticalAlignment="Center" />
+                            
+                            <ComboBox Grid.Column="1" ItemsSource="{Binding RoughnessLevelOptions}" 
+                                     SelectedItem="{Binding SelectedRoughnessLevel}" 
+                                     Style="{StaticResource DarkComboBoxStyle}" />
+                        </Grid>
+                        
+                        <!-- Preview Section -->
+                        <Border Background="#303030" CornerRadius="8" Padding="20,15,0,30">
+                            <StackPanel>
+                                <TextBlock Text="PREVIEW" Foreground="#0078D7" 
+                                           FontSize="16" FontWeight="SemiBold" Margin="0,0,0,15" />
+                                <TextBlock Text="{Binding MaterialFilename}" 
+                                           Foreground="#F0F0F0" FontSize="16" FontWeight="SemiBold" 
+                                           HorizontalAlignment="Center" TextWrapping="Wrap"
+                                           Visibility="{Binding HasMaterialName, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                <TextBlock Text="Enter Material Name to Generate Preview" 
+                                           Foreground="#888888" FontSize="16" 
+                                           HorizontalAlignment="Center"
+                                           Visibility="{Binding HasMaterialName, Converter={StaticResource InverseBooleanConverter}, ConverterParameter=Visibility}" />
+                            </StackPanel>
+                        </Border>
+                        
+                        <!-- Action Buttons -->
+                        <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Margin="0,0,0,20">
+                            <Button Content="Make Material" Command="{Binding MakeMaterialCommand}"
+                                    Style="{StaticResource BlueActionButton}" 
+                                    Margin="0,0,30,0"
+                                    IsEnabled="{Binding IsMaterialFilenameValid}" />
+                            
+                            <Button Content="Copy Material Name" Command="{Binding CopyMaterialNameCommand}"
+                                    Style="{StaticResource BlueActionButton}" 
+                                    IsEnabled="{Binding IsMaterialFilenameValid}" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+            
+            <!-- Watcher Page -->
+            <Grid Grid.Row="0" Grid.RowSpan="3" Background="#252526" 
+                  Visibility="{Binding IsWatcherOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                
+                <!-- Header -->
+                <TextBlock Grid.Row="0" Text="DIRECTORY SYNC" Style="{StaticResource HeaderText}" />
+                
+                <!-- Sync Content -->
+                <Grid Grid.Row="1">
+                    <!-- Empty State Message -->
+                    <TextBlock Text="Press the '+' button to add a directory sync pair" 
+                              Foreground="#777777" FontSize="16" FontStyle="Italic"
+                              HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Watcher.SyncPairs.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                    
+                    <!-- Directory Sync Pairs List -->
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,10,0,60">
+                        <ItemsControl ItemsSource="{Binding Watcher.SyncPairs}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#303030" Margin="0,0,0,15" Padding="20,15" CornerRadius="8">
+                                        <Border.Effect>
+                                            <DropShadowEffect ShadowDepth="2" Direction="270" Color="Black" Opacity="0.3" BlurRadius="5"/>
+                                        </Border.Effect>
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="Background" Value="#303030" />
+                                                <Style.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="#353535" />
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="Auto" />
+                                            </Grid.RowDefinitions>
+                                            
+                                            <!-- Header with folder icons -->
+                                            <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="#3E3E42" Padding="0,0,0,8" Margin="0,0,0,8">
+                                                <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                        
+                                                        <!-- Directory title (source folder name) -->
+                                                        <TextBlock Grid.Column="0" 
+                                                                  Text="{Binding SourceDirectoryName}" 
+                                                                  FontSize="16" Foreground="#FFFFFF" FontWeight="Bold" 
+                                                                  VerticalAlignment="Center" HorizontalAlignment="Left" />
+                                                        
+                                                        <!-- Status Badge -->
+                                                        <Border Grid.Column="1" CornerRadius="12" Padding="8,3" VerticalAlignment="Center"
+                                                               Visibility="{Binding HasChanges, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                            <Border.Style>
+                                                                <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="#2E8B57" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding TotalChangeCount}" Value="0">
+                                                                            <Setter Property="Background" Value="#666666" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Border.Style>
+                                                            <TextBlock Text="{Binding ChangeCountText}"
+                                                                     Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="12" />
+                                                        </Border>
+                                                </Grid>
+                                            </Border>
+                                            
+                                            <Grid Grid.Row="1" Margin="0,0,0,5">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding SourceDirectory}" Foreground="#F0F0F0" 
+                                                          TextWrapping="Wrap" VerticalAlignment="Center" />
+                                            </Grid>
+                                            
+                                            <Grid Grid.Row="2" Margin="0,0,0,10">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="{Binding TargetDirectory}" Foreground="#F0F0F0" 
+                                                          TextWrapping="Wrap" VerticalAlignment="Center" />
+                                            </Grid>
+                                            
+                                            <!-- File Changes Section -->
+                                            <Expander Grid.Row="3" Margin="0,5,0,10" IsExpanded="False"
+                                                     Header="{Binding ChangeCountText}" 
+                                                     Foreground="#F0F0F0"
+                                                     Background="Transparent"
+                                                     BorderThickness="0">
+                                                <Expander.Style>
+                                                    <Style TargetType="Expander">
+                                                        <Setter Property="BorderThickness" Value="0" />
+                                                        <Setter Property="BorderBrush" Value="Transparent" />
+                                                        <Style.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter Property="Background" Value="#353535" />
+                                                            </Trigger>
+                                                            <Trigger Property="IsExpanded" Value="True">
+                                                                <Setter Property="Background" Value="#353535" />
+                                                            </Trigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Expander.Style>
+                                                <Expander.HeaderTemplate>
+                                                    <DataTemplate>
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            
+                                                            <TextBlock Grid.Column="0" Text="&#xEA37;" FontFamily="Segoe MDL2 Assets" 
+                                                                      Foreground="#007ACC" Margin="0,0,8,0" FontSize="16" />
+                                                            
+                                                            <TextBlock Grid.Column="1" Text="{Binding}" Foreground="#F0F0F0" />
+                                                            
+                                                            <!-- Change count badges with different colors for each type -->
+                                                            <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <!-- Added files badge -->
+                                                <Border Background="#4CAF50" CornerRadius="4" Padding="8,3" Margin="0,0,5,0"
+                                                                   Visibility="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.AddedCount, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=NonZero}">
+                                                        <TextBlock Text="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.AddedCount, StringFormat='{}{+{0}}'}" 
+                                                             Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="12" />
+                                                </Border>
+                                                
+                                                <!-- Modified files badge -->
+                                                <Border Background="#2196F3" CornerRadius="4" Padding="8,3" Margin="0,0,5,0"
+                                                                   Visibility="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.ModifiedCount, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=NonZero}">
+                                                        <TextBlock Text="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.ModifiedCount, StringFormat='{}{~{0}}'}" 
+                                                             Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="12" />
+                                                </Border>
+                                                
+                                                <!-- Removed files badge -->
+                                                <Border Background="#F44336" CornerRadius="4" Padding="8,3" Margin="0,0,5,0"
+                                                                   Visibility="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.RemovedCount, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=NonZero}">
+                                                        <TextBlock Text="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.RemovedCount, StringFormat='{}{-{0}}'}" 
+                                                             Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="12" />
+                                                </Border>
+                                                
+                                                <!-- Missing files badge -->
+                                                <Border Background="#FF9800" CornerRadius="4" Padding="8,3" Margin="0,0,5,0"
+                                                                   Visibility="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.MissingCount, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=NonZero}">
+                                                        <TextBlock Text="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=DataContext.MissingCount, StringFormat='{}{?{0}}'}" 
+                                                             Foreground="#FFFFFF" FontWeight="SemiBold" FontSize="12" />
+                                                </Border>
+                                            </StackPanel>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </Expander.HeaderTemplate>
+                                                
+                                                <!-- File listing with icons -->
+                                                <Border Background="#252526" CornerRadius="4" Margin="0,8,0,0">
+                                                    <ListView ItemsSource="{Binding PendingChanges}" 
+                                                              Background="Transparent" 
+                                                              BorderThickness="0"
+                                                              MaxHeight="300">
+                                                        <ListView.ItemContainerStyle>
+                                                            <Style TargetType="ListViewItem">
+                                                                <Setter Property="Background" Value="Transparent" />
+                                                                <Setter Property="BorderThickness" Value="0" />
+                                                                <Setter Property="Padding" Value="5,3" />
+                                                                <Setter Property="Foreground" Value="#F0F0F0" />
+                                                                <Setter Property="Margin" Value="0,1,0,1" />
+                                                                <Style.Triggers>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter Property="Background" Value="#3E3E42" />
+                                                                    </Trigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </ListView.ItemContainerStyle>
+                                                        <ListView.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="Auto" /> <!-- Status icon -->
+                                                                        <ColumnDefinition Width="Auto" /> <!-- File type icon -->
+                                                                        <ColumnDefinition Width="*" /> <!-- Filename -->
+                                                                    </Grid.ColumnDefinitions>
+                                                                    
+                                                                    <!-- Status Icon -->
+                                                                    <TextBlock Grid.Column="0" Margin="0,0,10,0" VerticalAlignment="Center">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding ChangeType}" Value="Added">
+                                                                                        <Setter Property="Text" Value="+" />
+                                                                                        <Setter Property="Foreground" Value="#4CAF50" />
+                                                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                                                        <Setter Property="FontSize" Value="16" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding ChangeType}" Value="Modified">
+                                                                                        <Setter Property="Text" Value="~" />
+                                                                                        <Setter Property="Foreground" Value="#2196F3" />
+                                                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                                                        <Setter Property="FontSize" Value="16" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding ChangeType}" Value="Removed">
+                                                                                        <Setter Property="Text" Value="-" />
+                                                                                        <Setter Property="Foreground" Value="#F44336" />
+                                                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                                                        <Setter Property="FontSize" Value="16" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding ChangeType}" Value="Missing">
+                                                                                        <Setter Property="Text" Value="?" />
+                                                                                        <Setter Property="Foreground" Value="#FF9800" />
+                                                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                                                        <Setter Property="FontSize" Value="16" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding ChangeType}" Value="Renamed">
+                                                                                        <Setter Property="Text" Value="?" />
+                                                                                        <Setter Property="Foreground" Value="#9C27B0" />
+                                                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                                                        <Setter Property="FontSize" Value="16" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                    
+                                                                    <!-- File Type Icon -->
+                                                                    <TextBlock Grid.Column="1" Margin="0,0,10,0" VerticalAlignment="Center"
+                                                                               Text="{Binding FileTypeIcon}" Foreground="#CCCCCC" />
+                                                                    
+                                                                    <!-- Filename -->
+                                                                    <TextBlock Grid.Column="2" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                                               ToolTip="{Binding FilePath}">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding ChangeType}" Value="Renamed">
+                                                                                        <Setter Property="Text" Value="" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding ChangeType}" Value="Removed">
+                                                                                        <Setter Property="TextDecorations" Value="Strikethrough" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                        
+                                                                        <!-- For normal files -->
+                                                                        <Run Text="{Binding DisplayName, Mode=OneWay}" 
+                                                                             Foreground="#F0F0F0">
+                                                                            <Run.Style>
+                                                                                <Style TargetType="Run">
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding ChangeType}" Value="Renamed">
+                                                                                            <Setter Property="Text" Value="" />
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </Run.Style>
+                                                                        </Run>
+                                                                        
+                                                                        <!-- For renamed files -->
+                                                                        <Run Text="{Binding OldName, Mode=OneWay}"
+                                                                             Foreground="#F0F0F0">
+                                                                            <Run.Style>
+                                                                                <Style TargetType="Run">
+                                                                                    <Setter Property="Text" Value="" />
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding ChangeType}" Value="Renamed">
+                                                                                            <Setter Property="Text" Value="{Binding OldName, Mode=OneWay}" />
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </Run.Style>
+                                                                        </Run>
+                                                                        <Run Text=" ? "
+                                                                             Foreground="#9C27B0"
+                                                                             FontWeight="Bold">
+                                                                            <Run.Style>
+                                                                                <Style TargetType="Run">
+                                                                                    <Setter Property="Text" Value="" />
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding ChangeType}" Value="Renamed">
+                                                                                            <Setter Property="Text" Value=" ? " />
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </Run.Style>
+                                                                        </Run>
+                                                                        <Run Text="{Binding DisplayName, Mode=OneWay}">
+                                                                            <Run.Style>
+                                                                                <Style TargetType="Run">
+                                                                                    <Setter Property="Text" Value="" />
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding ChangeType}" Value="Renamed">
+                                                                                            <Setter Property="Text" Value="{Binding DisplayName, Mode=OneWay}" />
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </Run.Style>
+                                                                        </Run>
+                                                                    </TextBlock>
+                                                                </Grid>
+                                                            </DataTemplate>
+                                                        </ListView.ItemTemplate>
+                                                    </ListView>
+                                                </Border>
+                                            </Expander>
+                                            
+                                            <!-- Button Bar with Progress Indicator and Async Toggle -->
+                                            <Border Grid.Row="4" BorderThickness="0,1,0,0" BorderBrush="#3E3E42" Padding="0,12,0,0" Margin="0,5,0,0">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <!-- Sync Status Indicator (If currently syncing) -->
+                                                    <StackPanel Grid.Column="0" Orientation="Horizontal"
+                                                              Visibility="{Binding RelativeSource={RelativeSource AncestorType=ItemsControl}, Path=DataContext.Watcher.IsSyncing, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" 
+                                                                  Foreground="#0078D7" Margin="0,0,8,0" FontSize="16" VerticalAlignment="Center">
+                                                            <TextBlock.RenderTransform>
+                                                                <RotateTransform CenterX="8" CenterY="8" Angle="0"/>
+                                                            </TextBlock.RenderTransform>
+                                                            <TextBlock.Triggers>
+                                                                <EventTrigger RoutedEvent="TextBlock.Loaded">
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard>
+                                                                            <DoubleAnimation
+                                                                                Storyboard.TargetProperty="(TextBlock.RenderTransform).(RotateTransform.Angle)"
+                                                                                From="0" To="360" Duration="0:0:2" RepeatBehavior="Forever" />
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </EventTrigger>
+                                                            </TextBlock.Triggers>
+                                                        </TextBlock>
+                                                        <TextBlock Text="SYNCING..." Foreground="#0078D7" Margin="0,0,10,0" VerticalAlignment="Center" />
+                                                    </StackPanel>
+                                                    
+                                                    <!-- Last Sync Time and Async Toggle -->
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                        <TextBlock Foreground="#AAAAAA" Margin="0,0,15,0" VerticalAlignment="Center">
+                                                            <TextBlock.Style>
+                                                                <Style TargetType="TextBlock">
+                                                                    <Setter Property="Text" Value="Never synced" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding LastScanTime}" Value="{x:Static system:DateTime.MinValue}">
+                                                                            <Setter Property="Text" Value="Never synced" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding LastScanTime, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=NonMinValue}" Value="True">
+                                                                            <Setter Property="Text" Value="{Binding LastScanTime, StringFormat='{}Last synced: {0:g}'}" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </TextBlock.Style>
+                                                        </TextBlock>
+                                                        
+                                                        <!-- Async Toggle -->
+                                                        <CheckBox Content="Async" Margin="0,0,10,0"
+                                                                  IsChecked="{Binding IsAsyncEnabled}"
+                                                                  Style="{StaticResource RoundedCheckBox}" 
+                                                                  ToolTip="Enable asynchronous file operations" />
+                                                    </StackPanel>
+                                                    
+                                                    <!-- Action Buttons -->
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button Content="Sync Now" 
+                                                       Style="{StaticResource BlueActionButton}"
+                                                       Padding="10,5"
+                                                       Margin="0,0,10,0"
+                                                       Command="{Binding DataContext.Watcher.SyncDirectoriesCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                       CommandParameter="{Binding}" />
+                                                       
+                                                <Button Content="Remove" 
+                                                       Style="{StaticResource ActionButton}"
+                                                       Padding="10,5"
+                                                       Command="{Binding DataContext.Watcher.RemoveSyncPairCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                       CommandParameter="{Binding}" />
+                                            </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    
+                    <!-- Add Button (+ in bottom right) -->
+                    <Button HorizontalAlignment="Right" VerticalAlignment="Bottom" 
+                            Style="{StaticResource SquareRoundedButton}" Width="60" Height="60"
+                            Margin="0,0,20,20"
+                            Command="{Binding OpenAddDirectoryFormCommand}">
+                        <TextBlock Text="+" FontSize="36" Foreground="White" 
+                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Margin="0,0,0,3" LineHeight="36" TextAlignment="Center" />
+                    </Button>
+                    
+                    <!-- Add Directory Form Popup -->
+                    <Border Background="#77000000" Visibility="{Binding IsAddDirectoryFormOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Border Width="500" Background="#303030" CornerRadius="8" Padding="20" 
+                                HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                
+                                <!-- Popup Header -->
+                                <Grid Grid.Row="0" Margin="0,0,0,20">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <TextBlock Grid.Column="0" Text="ADD DIRECTORY SYNC" 
+                                               Foreground="#0078D7" FontSize="18" 
+                                               FontWeight="SemiBold" VerticalAlignment="Center" />
+                                               
+                                    <Button Grid.Column="1" Content="?" Style="{StaticResource TransparentButton}"
+                                            Command="{Binding CloseAddDirectoryFormCommand}" />
+                                </Grid>
+                                
+                                <!-- Source Directory -->
+                                <Grid Grid.Row="1" Margin="0,0,0,15">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <TextBlock Grid.Column="0" Text="Source Directory:" 
+                                              Foreground="#F0F0F0" VerticalAlignment="Center" />
+                                    
+                                    <Border Grid.Column="1" Background="#3F3F46" BorderThickness="0">
+                                        <TextBox Background="Transparent" Foreground="#F0F0F0" 
+                                                BorderThickness="0" Padding="10,8" 
+                                                Text="{Binding Watcher.SourceDirectory, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Border>
+                                    
+                                    <Button Grid.Column="2" Content="Browse" 
+                                            Style="{StaticResource BlueActionButton}" 
+                                            Margin="10,0,0,0" Padding="15,8" 
+                                            Command="{Binding Watcher.BrowseSourceCommand}" />
+                                </Grid>
+                                
+                                <!-- Target Directory -->
+                                <Grid Grid.Row="2" Margin="0,0,0,15">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <TextBlock Grid.Column="0" Text="Target Directory:" 
+                                              Foreground="#F0F0F0" VerticalAlignment="Center" />
+                                    
+                                    <Border Grid.Column="1" Background="#3F3F46" BorderThickness="0">
+                                        <TextBox Background="Transparent" Foreground="#F0F0F0" 
+                                                BorderThickness="0" Padding="10,8" 
+                                                Text="{Binding Watcher.TargetDirectory, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Border>
+                                    
+                                    <Button Grid.Column="2" Content="Browse" 
+                                            Style="{StaticResource BlueActionButton}" 
+                                            Margin="10,0,0,0" Padding="15,8" 
+                                            Command="{Binding Watcher.BrowseTargetCommand}" />
+                                </Grid>
+                                
+                                <!-- Include Subdirectories Option and Async Toggle -->
+                                <Grid Grid.Row="3" Margin="0,5,0,25">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    
+                                    <CheckBox Grid.Column="0" Content="Include Subdirectories" 
+                                          Foreground="#F0F0F0"
+                                          Style="{StaticResource RoundedCheckBox}"
+                                          IsChecked="{Binding Watcher.IncludeSubdirectories}" />
+                                              
+                                    <CheckBox Grid.Column="1" Content="Enable Asynchronous Sync" 
+                                              Foreground="#F0F0F0"
+                                              Style="{StaticResource RoundedCheckBox}"
+                                              IsChecked="{Binding Watcher.IsAsyncEnabled}" />
+                                </Grid>
+                                
+                                <!-- Add Button -->
+                                <Button Grid.Row="4" Content="Add Directory Pair" 
+                                        Style="{StaticResource BlueActionButton}" 
+                                        Command="{Binding Watcher.AddSyncPairCommand}" 
+                                        HorizontalAlignment="Right" />
+                            </Grid>
+                        </Border>
+                    </Border>
+                </Grid>
+            </Grid>
+            
+            <!-- New Process Dialog Popup -->
+            <Border Grid.Row="0" Grid.RowSpan="3" Background="Transparent" 
+                    Visibility="{Binding IsNewProcessDialogOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border Width="500" Background="#333333" CornerRadius="8" Padding="30">
+                    <DockPanel LastChildFill="True">
+                        <!-- Bottom Buttons Panel -->
+                        <StackPanel DockPanel.Dock="Bottom" Margin="0,15,0,0">
+                            <!-- Separator removed -->
+                            <!-- Dialog Buttons -->
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,0">
+                                <Button Content="Cancel" Padding="15,8" Margin="0,0,10,0"
+                                       Command="{Binding CancelNewProcessCommand}" 
+                                       Style="{StaticResource ActionButton}" 
+                                       BorderThickness="0" />
+                                
+                                <Button Content="Start Process" Padding="15,8"
+                                       Command="{Binding StartNewProcessCommand}" 
+                                       IsEnabled="{Binding CanStartProcess}"
+                                       Style="{StaticResource BlueActionButton}" BorderThickness="0" />
+                            </StackPanel>
+                        </StackPanel>
+                        
+                        <!-- Main Content -->
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />  <!-- 0: Title -->
+                                <RowDefinition Height="Auto" />  <!-- 1: Process Type -->
+                                <RowDefinition Height="Auto" />  <!-- 2: Directory Selection -->
+                                <RowDefinition Height="Auto" />  <!-- 3: Volume Options -->
+                                <RowDefinition Height="Auto" />  <!-- 4: Output Options -->
+                                <RowDefinition Height="Auto" />  <!-- 5: Machines -->
+                            </Grid.RowDefinitions>
+                            
+                            <!-- Dialog Title -->
+                            <TextBlock Grid.Row="0" Text="NEW PROCESS" Foreground="#F0F0F0" 
+                                      FontSize="18" FontWeight="Bold" Margin="0,0,0,20" />
+                            
+                            <!-- Process Type Selection (Always visible) -->
+                            <Grid Grid.Row="1" Margin="0,0,0,20">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="155" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" Text="SELECT PROCESS" Foreground="#F0F0F0" 
+                                          FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                
+                                <ComboBox Grid.Column="1" ItemsSource="{Binding ProcessTypes}" 
+                                         SelectedItem="{Binding SelectedProcessType}" 
+                                         Style="{StaticResource DarkComboBoxStyle}" />
+                            </Grid>
+                            
+                            <!-- Directory Selection (Always visible for file processes) -->
+                            <Grid Grid.Row="2" Margin="0,0,0,20" 
+                                 Visibility="{Binding IsFileProcessSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="155" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" Text="SELECT DIRECTORIES" Foreground="#F0F0F0" 
+                                          FontSize="14" FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,8,0,0" />
+                                
+                                <Border Grid.Column="1" Name="DirectoryBorder" Background="#3F3F46" 
+                                       BorderThickness="1"
+                                       BorderBrush="Transparent">
+                                    <TextBox Name="DirectoryTextBox" Text="{Binding SelectedDirectory}" IsReadOnly="True"
+                                            Background="Transparent" Foreground="#F0F0F0" 
+                                            BorderThickness="0" Padding="10,8" MinHeight="36"
+                                            TextWrapping="Wrap" VerticalAlignment="Center"
+                                            AllowDrop="True"
+                                            PreviewDragOver="DirectoryTextBox_PreviewDragOver"
+                                            PreviewDrop="DirectoryTextBox_PreviewDrop">
+                                        <TextBox.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Clear Selection" Click="ClearDirectories_Click" />
+                                            </ContextMenu>
+                                        </TextBox.ContextMenu>
+                                        <TextBox.Style>
+                                            <Style TargetType="TextBox">
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="TextBox">
+                                                            <Grid>
+                                                                <ScrollViewer x:Name="PART_ContentHost" Margin="0" />
+                                                                <TextBlock Text="Drag folders here or click Browse..." 
+                                                                          Foreground="#999999" Margin="10,0,0,0" 
+                                                                          VerticalAlignment="Center"
+                                                                          Visibility="{Binding Text, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource BooleanToVisibilityConverter}, ConverterParameter=inverse}" />
+                                                            </Grid>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </TextBox.Style>
+                                    </TextBox>
+                                </Border>
+                                
+                                <Button Grid.Column="2" Content="Browse" Margin="10,0,0,0" Padding="12,8"
+                                       Command="{Binding BrowseDirectoryCommand}" 
+                                       Style="{StaticResource BlueActionButton}" BorderThickness="0" />
+                            </Grid>
+                            
+                            <!-- Volume Options (Collapsible, only visible for VolumeCompression) -->
+                            <Border Grid.Row="3" Margin="0,0,0,10" 
+                                   Visibility="{Binding SelectedProcessType, Converter={StaticResource EnumEqualityConverter}, ConverterParameter='VolumeCompression'}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    
+                                    <!-- Collapsible Header -->
+                                    <Button Grid.Row="0" Background="Transparent" BorderThickness="0" Padding="0,5"
+                                           Command="{Binding ToggleVolumeOptionsCommand}" HorizontalContentAlignment="Left">
+                                        <Grid Width="{Binding ActualWidth, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type Button}}}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            
+                                            <TextBlock Grid.Column="0" Text="VOLUME OPTIONS" Foreground="#F0F0F0" 
+                                                      FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            
+                                            <TextBlock Grid.Column="1" FontFamily="Segoe MDL2 Assets" Text="&#xE70E;" 
+                                                      Foreground="#F0F0F0" VerticalAlignment="Center" 
+                                                      RenderTransformOrigin="0.5,0.5">
+                                                <TextBlock.RenderTransform>
+                                                    <RotateTransform Angle="{Binding IsVolumeOptionsExpanded, Converter={StaticResource BooleanToRotationConverter}}" />
+                                                </TextBlock.RenderTransform>
+                                            </TextBlock>
+                                        </Grid>
+                                    </Button>
+                                    
+                                    <!-- Collapsible Content -->
+                                    <Grid Grid.Row="1" Margin="0,5,0,0"
+                                         Visibility="{Binding IsVolumeOptionsExpanded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        
+                                        <!-- Density Level Dropdown -->
+                                        <Grid Grid.Row="0" Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="155" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            
+                                            <TextBlock Grid.Column="0" Text="Density:" Foreground="#F0F0F0" 
+                                                      VerticalAlignment="Center" />
+                                            
+                                            <ComboBox Grid.Column="1" ItemsSource="{Binding DensityLevelOptions}" 
+                                                    SelectedItem="{Binding SelectedDensityLevel}" 
+                                                    Style="{StaticResource DarkComboBoxStyle}" />
+                                        </Grid>
+                                        
+                                        <!-- Compression Level Dropdown -->
+                                        <Grid Grid.Row="1" Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="155" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            
+                                            <TextBlock Grid.Column="0" Text="Compression:" Foreground="#F0F0F0" 
+                                                      VerticalAlignment="Center" />
+                                            
+                                            <ComboBox Grid.Column="1" ItemsSource="{Binding CompressionLevelOptions}" 
+                                                    SelectedItem="{Binding SelectedCompressionLevel}" 
+                                                    Style="{StaticResource DarkComboBoxStyle}" />
+                                        </Grid>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                            
+                            <!-- Output Options (Collapsible, only visible for VolumeCompression) -->
+                            <Border Grid.Row="4" Margin="0,0,0,20"
+                                   Visibility="{Binding SelectedProcessType, Converter={StaticResource EnumEqualityConverter}, ConverterParameter='VolumeCompression'}">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    
+                                    <!-- Collapsible Header -->
+                                    <Button Grid.Row="0" Background="Transparent" BorderThickness="0" Padding="0,5"
+                                           Command="{Binding ToggleOutputOptionsCommand}" HorizontalContentAlignment="Left">
+                                        <Grid Width="{Binding ActualWidth, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type Button}}}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            
+                                            <TextBlock Grid.Column="0" Text="OUTPUT OPTIONS" Foreground="#F0F0F0" 
+                                                      FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                            
+                                            <TextBlock Grid.Column="1" FontFamily="Segoe MDL2 Assets" Text="&#xE70E;" 
+                                                      Foreground="#F0F0F0" VerticalAlignment="Center"
+                                                      RenderTransformOrigin="0.5,0.5">
+                                                <TextBlock.RenderTransform>
+                                                    <RotateTransform Angle="{Binding IsOutputOptionsExpanded, Converter={StaticResource BooleanToRotationConverter}}" />
+                                                </TextBlock.RenderTransform>
+                                            </TextBlock>
+                                        </Grid>
+                                    </Button>
+                                    
+                                    <!-- Collapsible Content -->
+                                    <Grid Grid.Row="1" Margin="0,5,0,0"
+                                         Visibility="{Binding IsOutputOptionsExpanded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        
+                                        <!-- Create output folder option -->
+                                        <ItemsControl Grid.Row="0">
+                                            <StackPanel Orientation="Horizontal" Margin="0,2">
+                                                <CheckBox IsChecked="{Binding CreateOutputFolder}"
+                                                         Content="Create folder" 
+                                                         Foreground="#F0F0F0"
+                                                         Style="{StaticResource RoundedCheckBox}"
+                                                         VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </ItemsControl>
+                                        
+                                        <!-- Override output directory option -->
+                                        <ItemsControl Grid.Row="1">
+                                            <StackPanel Orientation="Horizontal" Margin="0,2">
+                                                <CheckBox IsChecked="{Binding UseOverrideOutputDirectory}"
+                                                         Content="Override Output Directory" 
+                                                         Foreground="#F0F0F0"
+                                                         Style="{StaticResource RoundedCheckBox}"
+                                                         VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </ItemsControl>
+                                        
+                                        <!-- Output Directory Selection (visible only when override is checked) -->
+                                        <Grid Grid.Row="2" Margin="0,5,0,0" 
+                                             Visibility="{Binding UseOverrideOutputDirectory, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            
+                                            <Border Grid.Column="0" BorderBrush="#444444" BorderThickness="1" Background="#252526">
+                                                <TextBlock Text="{Binding OutputDirectory, TargetNullValue='No directory selected'}" 
+                                                         Foreground="#F0F0F0" Padding="10,6" TextTrimming="CharacterEllipsis" />
+                                            </Border>
+                                            
+                                            <Button Grid.Column="1" Content="Browse..." Margin="10,0,0,0" 
+                                                   Command="{Binding BrowseOutputDirectoryCommand}"
+                                                   Style="{StaticResource BlueActionButton}" Padding="12,8" BorderThickness="0" />
+                                        </Grid>
+                                    </Grid>
+                                </Grid>
+                            </Border>
+                            
+                            <!-- Machine Selection (Always visible) -->
+                            <Grid Grid.Row="5" Margin="0,0,0,20">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                
+                                <TextBlock Grid.Row="0" Text="CHOOSE MACHINE(S):" Foreground="#F0F0F0" 
+                                          FontSize="14" FontWeight="SemiBold" Margin="0,0,0,5" />
+                                
+                                <ScrollViewer Grid.Row="1" MaxHeight="150" MinHeight="60" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding AvailableDevices}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal" Margin="0,2">
+                                                    <CheckBox IsChecked="{Binding IsSelected}" 
+                                                             IsEnabled="{Binding IsAvailable}" 
+                                                             Style="{StaticResource RoundedCheckBox}"
+                                                             VerticalAlignment="Center" />
+                                                    <TextBlock Text="{Binding Name}" 
+                                                             Foreground="#F0F0F0" 
+                                                             Margin="10,0,0,0"
+                                                             VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </Grid>
+                        </Grid>
+                    </DockPanel>
+                </Border>
+            </Border>
+            
+            <!-- Server Connection Dialog -->
+            <Border Grid.Column="0" Grid.ColumnSpan="2" Background="Transparent" 
+                    Visibility="{Binding IsServerDialogOpen, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Border Width="400" Height="Auto" Background="#333333" CornerRadius="8" Padding="30">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        
+                        <!-- Dialog Title -->
+                        <TextBlock Grid.Row="0" Text="CONNECT TO SERVER" Foreground="#F0F0F0" 
+                                  FontSize="18" FontWeight="Bold" Margin="0,0,0,20" />
+                        
+                        <!-- Server Address Input -->
+                        <Grid Grid.Row="1" Margin="0,0,0,20">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="SERVER URL:" Foreground="#F0F0F0" 
+                                      FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,15,0" />
+                            
+                            <TextBox Grid.Column="1" Text="{Binding ServerAddress, UpdateSourceTrigger=PropertyChanged}" 
+                                    Background="#3F3F46" Foreground="#F0F0F0" BorderThickness="0" Padding="10,8" />
+                        </Grid>
+                        
+                        <!-- Connection Status -->
+                        <TextBlock Grid.Row="2" Text="{Binding ConnectionStatus}" Foreground="#F0F0F0" 
+                                  FontSize="12" Margin="0,0,0,20" TextWrapping="Wrap" />
+                        
+                        <!-- Dialog Buttons -->
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="Cancel" Padding="15,8" Margin="0,0,10,0"
+                                   Command="{Binding CancelServerDialogCommand}" 
+                                   Style="{StaticResource ActionButton}"
+                                   BorderThickness="0" />
+                            
+                            <Button Content="Connect" Padding="15,8"
+                                   Command="{Binding ConnectToServerCommand}" 
+                                   Style="{StaticResource BlueActionButton}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Border>
+            
+            <!-- Node Detail View -->
+            <Border Grid.Column="0" Grid.ColumnSpan="2" Background="#252526" 
+                    Visibility="{Binding IsNodeDetailViewVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid Margin="40">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Back Button -->
+                    <Button Grid.Row="0" HorizontalAlignment="Left" Content="? BACK" 
+                            Command="{Binding CloseNodeDetailsCommand}"
+                            Style="{StaticResource ActionButton}" Margin="0,0,0,30" />
+                    
+                    <!-- Node Details -->
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />  <!-- Name -->
+                            <RowDefinition Height="Auto" />  <!-- Status -->
+                            <RowDefinition Height="Auto" />  <!-- Task -->
+                            <RowDefinition Height="Auto" />  <!-- Progress -->
+                            <RowDefinition Height="Auto" />  <!-- Time Started -->
+                            <RowDefinition Height="Auto" />  <!-- Time Elapsed -->
+                            <RowDefinition Height="Auto" />  <!-- Time Remaining -->
+                            <RowDefinition Height="Auto" />  <!-- Last Task Header -->
+                            <RowDefinition Height="*" />     <!-- Last Task Details -->
+                        </Grid.RowDefinitions>
+
+                        <!-- Node Name -->
+                        <TextBlock Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                                   Text="{Binding SelectedNode.Name}" Foreground="#F0F0F0"
+                                   FontSize="32" FontWeight="Bold" Margin="0,0,0,30" />
+
+                        <!-- Status -->
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="STATUS:" Foreground="#AAAAAA"
+                                   FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedNode.StatusText}"
+                                   Foreground="{Binding SelectedNode.StatusColor}" FontSize="16" FontWeight="Bold" />
+
+                        <!-- Task -->
+                        <TextBlock Grid.Row="2" Grid.Column="0" Text="TASK:" Foreground="#AAAAAA"
+                                   FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SelectedNode.ActiveTaskName}"
+                                   Foreground="#F0F0F0" FontSize="16" FontWeight="Bold" />
+
+                        <!-- Progress -->
+                        <TextBlock Grid.Row="3" Grid.Column="0" Text="PROGRESS:" Foreground="#AAAAAA"
+                                   FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <Border Grid.Row="3" Grid.Column="1" Background="#3F3F46"
+                                Height="24" CornerRadius="12" Margin="0,0,0,15">
+                            <Rectangle Fill="#007ACC" HorizontalAlignment="Left"
+                                      Height="24" RadiusX="12" RadiusY="12">
+                                <Rectangle.Width>
+                                    <MultiBinding Converter="{StaticResource WidthPercentageConverter}">
+                                        <Binding Path="SelectedNode.TaskProgress"/>
+                                        <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Border}"/>
+                                    </MultiBinding>
+                                </Rectangle.Width>
+                            </Rectangle>
+                        </Border>
+
+                        <!-- Time Started -->
+                        <TextBlock Grid.Row="4" Grid.Column="0" Text="TIME STARTED:" Foreground="#AAAAAA"
+                                   FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock Grid.Row="4" Grid.Column="1"
+                                   Text="{Binding SelectedNode.TaskStartTimeFormatted}"
+                                   Foreground="#F0F0F0" FontSize="14" />
+
+                        <!-- Time Elapsed -->
+                        <TextBlock Grid.Row="5" Grid.Column="0" Text="TIME ELAPSED:" Foreground="#AAAAAA"
+                                   FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock Grid.Row="5" Grid.Column="1"
+                                   Text="{Binding SelectedNode.TaskElapsedTimeFormatted}"
+                                   Foreground="#F0F0F0" FontSize="14" />
+
+                        <!-- Time Remaining -->
+                        <TextBlock Grid.Row="6" Grid.Column="0" Text="TIME REMAINING:" Foreground="#AAAAAA"
+                                   FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock Grid.Row="6" Grid.Column="1"
+                                   Text="{Binding SelectedNode.TaskRemainingTimeFormatted}"
+                                   Foreground="#F0F0F0" FontSize="14" />
+
+                        <!-- Last Task Header -->
+                        <TextBlock Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" Text="LAST TASK"
+                                   Foreground="#AAAAAA" FontSize="16" FontWeight="SemiBold"
+                                   Margin="0,20,0,10" />
+
+                        <!-- Last Task Details -->
+                        <Border Grid.Row="8" Grid.Column="0" Grid.ColumnSpan="2"
+                                Background="#303030" CornerRadius="8" Padding="20,15">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="120" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- Last Task Name and Status -->
+                                <TextBlock Grid.Row="0" Grid.Column="0" Text="TASK:" Foreground="#AAAAAA" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding SelectedNode.LastTaskName}" Foreground="#F0F0F0" FontSize="14" />
+
+                                <TextBlock Grid.Row="0" Grid.Column="2" Text="STATUS:" Foreground="#AAAAAA" FontSize="14" FontWeight="SemiBold" Margin="20,0,0,0" />
+                                <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding SelectedNode.LastTaskStatus}" Foreground="{Binding SelectedNode.LastTaskStatusColor}" FontSize="14" />
+
+                                <!-- Last Task Timing -->
+                                <TextBlock Grid.Row="1" Grid.Column="0" Text="STARTED:" Foreground="#AAAAAA" FontSize="14" FontWeight="SemiBold" Margin="0,10,0,0" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedNode.LastTaskStartedAt}" Foreground="#F0F0F0" FontSize="14" Margin="0,10,0,0" />
+
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="COMPLETED:" Foreground="#AAAAAA" FontSize="14" FontWeight="SemiBold" Margin="20,10,0,0" />
+                                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding SelectedNode.LastTaskCompletedAt}" Foreground="#F0F0F0" FontSize="14" Margin="0,10,0,0" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                    
+                    <!-- Action Buttons -->
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,30,0,0">
+                        <Button Content="ABORT PROCESS" 
+                            Command="{Binding AbortProcessCommand}"
+                            IsEnabled="{Binding SelectedNode.HasActiveTask}"
+                               Style="{StaticResource ActionButton}" />
+                               
+                        <Button Content="DEBUG OUTPUT" Margin="15,0,0,0"
+                               Command="{Binding ToggleDebugWindowCommand}"
+                               Style="{StaticResource ActionButton}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            
+            <!-- Debug Output Window -->
+            <Border Grid.Row="0" Grid.RowSpan="3" Background="#252526" 
+                    Visibility="{Binding IsDebugWindowVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid Margin="40">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Grid Grid.Row="0" Margin="0,0,0,20">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        
+                        <TextBlock Grid.Column="0" Text="DEBUG OUTPUT" 
+                                 Foreground="#F0F0F0" FontSize="24" FontWeight="Bold" />
+                        
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Content="Clear" Padding="15,8" Margin="0,0,10,0"
+                                  Command="{Binding ClearDebugOutputCommand}" 
+                                  Style="{StaticResource ActionButton}" />
+                            <Button Content="Close" Padding="15,8"
+                                  Command="{Binding ToggleDebugWindowCommand}" 
+                                  Style="{StaticResource ActionButton}" />
+                        </StackPanel>
+                    </Grid>
+                    
+                    <!-- Debug Output Content -->
+                    <Border Grid.Row="1" Background="#1E1E1E" BorderBrush="#444444" BorderThickness="1">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                            <TextBox Text="{Binding DebugOutput, Mode=TwoWay}" 
+                                     Background="Transparent"
+                                     Foreground="#CCCCCC"
+                                     FontFamily="Consolas"
+                                     Padding="10"
+                                     IsReadOnly="True"
+                                     AcceptsReturn="True"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     BorderThickness="0"
+                                     TextWrapping="NoWrap" />
+                        </ScrollViewer>
+                    </Border>
+                </Grid>
+            </Border>
+            
+            <!-- Task Detail View -->
+            <Border Grid.Column="0" Grid.ColumnSpan="2" Background="#252526" 
+                    Visibility="{Binding IsTaskDetailViewVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid Margin="40">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Back Button -->
+                    <Button Grid.Row="0" HorizontalAlignment="Left" Content="? BACK" 
+                            Command="{Binding CloseTaskDetailsCommand}"
+                            Style="{StaticResource ActionButton}" Margin="0,0,0,30" />
+                    
+                    <!-- Task Details -->
+                    <Grid Grid.Row="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        
+                        <!-- Task Name and Type -->
+                        <Grid Grid.Row="0" Margin="0,0,0,30">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            
+                            <TextBlock Grid.Column="0" Text="{Binding SelectedTask.Name}" 
+                                       Foreground="#F0F0F0" FontSize="32" FontWeight="Bold" />
+                            
+                            <Border Grid.Column="1" Background="#303030" CornerRadius="6" Padding="12,8" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SelectedTask.StatusDisplay}" 
+                                           Foreground="{Binding SelectedTask.StatusColor}" 
+                                           FontSize="16" FontWeight="Bold" />
+                            </Border>
+                        </Grid>
+                        
+                        <!-- Task Progress Section -->
+                        <Grid Grid.Row="1" Margin="0,0,0,30">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            
+                            <TextBlock Grid.Row="0" Text="TASK PROGRESS" Foreground="#AAAAAA" 
+                                       FontSize="18" FontWeight="SemiBold" Margin="0,0,0,15" />
+                            
+                            <!-- Progress Bar -->
+                            <Grid Grid.Row="1" Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                
+                                <Border Grid.Column="0" Background="#3F3F46" Height="24" CornerRadius="12" Margin="0,0,20,0">
+                                    <Rectangle Fill="#007ACC" HorizontalAlignment="Left" Height="24" RadiusX="12" RadiusY="12">
+                                        <Rectangle.Width>
+                                            <MultiBinding Converter="{StaticResource WidthPercentageConverter}">
+                                                <Binding Path="SelectedTask.Progress"/>
+                                                <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Border}"/>
+                                            </MultiBinding>
+                                        </Rectangle.Width>
+                                    </Rectangle>
+                                </Border>
+                                
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.TaskProgressPercentage}" 
+                                           Foreground="#F0F0F0" FontSize="16" FontWeight="Bold" 
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                            
+                            <!-- Task Details -->
+                            <Grid Grid.Row="2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" Text="CREATED:" Foreground="#AAAAAA" 
+                                           FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.CreatedAtFormatted}" 
+                                           Foreground="#F0F0F0" FontSize="14" Margin="10,0,0,0" />
+                                
+                                <TextBlock Grid.Column="2" Text="STARTED:" Foreground="#AAAAAA" 
+                                           FontSize="14" FontWeight="SemiBold" Margin="30,0,0,0" />
+                                <TextBlock Grid.Column="3" Text="{Binding SelectedTask.StartedAtFormatted}" 
+                                           Foreground="#F0F0F0" FontSize="14" Margin="10,0,0,0" />
+                            </Grid>
+                        </Grid>
+                        
+                        <!-- Node Data Section -->
+                        <Grid Grid.Row="2" Margin="0,0,0,30">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            
+                            <TextBlock Grid.Row="0" Text="ASSIGNED NODES" Foreground="#AAAAAA" 
+                                       FontSize="18" FontWeight="SemiBold" Margin="0,0,0,15" />
+                            
+                            <Border Grid.Row="1" Background="#303030" CornerRadius="8" Padding="20,15">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    
+                                    <!-- Node Info Header -->
+                                    <Grid Grid.Row="0" Margin="0,0,0,10">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        
+                                        <TextBlock Grid.Column="0" Text="NODE" Foreground="#AAAAAA" 
+                                                   FontSize="14" FontWeight="SemiBold" />
+                                        
+                                        <TextBlock Grid.Column="1" Text="STATUS" Foreground="#AAAAAA" 
+                                                   FontSize="14" FontWeight="SemiBold" Margin="0,0,20,0" />
+                                        
+                                        <TextBlock Grid.Column="2" Text="PROGRESS" Foreground="#AAAAAA" 
+                                                   FontSize="14" FontWeight="SemiBold" />
+                                    </Grid>
+                                    
+                                    <!-- Node List -->
+                                    <ItemsControl Grid.Row="1" ItemsSource="{Binding SelectedTask.AssignedNodes}" 
+                                                  Visibility="{Binding SelectedTask.AssignedNodeCount, Converter={StaticResource IntToVisibilityConverter}}"
+                                                  Margin="0,0,0,0">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,5">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <!-- Node Name -->
+                                                    <TextBlock Grid.Column="0" Text="{Binding NodeName}" 
+                                                               Foreground="#F0F0F0" FontSize="14" />
+                                                    
+                                                    <!-- Node Status -->
+                                                    <TextBlock Grid.Column="1" Text="{Binding Status, TargetNullValue='ASSIGNED'}" 
+                                                               Foreground="#F0F0F0" FontSize="14" Margin="0,0,20,0" />
+                                                    
+                                                    <!-- Node Progress -->
+                                                    <TextBlock Grid.Column="2" Text="{Binding ProgressDisplay, TargetNullValue='--'}" 
+                                                               Foreground="#F0F0F0" FontSize="14" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    
+                                    <!-- No nodes message -->
+                                    <TextBlock Grid.Row="1" Text="No nodes assigned to this task"
+                                               Foreground="#AAAAAA" FontSize="14"
+                                               Visibility="{Binding SelectedTask.AssignedNodeCount, Converter={StaticResource ZeroIntToVisibilityConverter}}" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        
+                        <!-- Debug Output -->
+                        <Grid Grid.Row="3" Margin="0,0,0,0">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            
+                            <TextBlock Grid.Row="0" Text="DEBUG OUTPUT" Foreground="#AAAAAA" 
+                                       FontSize="18" FontWeight="SemiBold" Margin="0,0,0,15" />
+                            
+                            <Border Grid.Row="1" Background="#1E1E1E" BorderBrush="#444444" BorderThickness="1" MinHeight="120">
+                                <TextBlock Text="Task processing output will appear here"
+                                           Foreground="#AAAAAA" FontFamily="Consolas" 
+                                           Padding="10" VerticalAlignment="Center" 
+                                           HorizontalAlignment="Center" />
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

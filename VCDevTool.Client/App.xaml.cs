@@ -25,7 +25,7 @@ public partial class App : System.Windows.Application
         SlackService = new SlackNotificationService();
         
         // Default server address for debug hub client
-        string serverAddress = "http://192.168.3.34:5289";
+        string serverAddress = "http://localhost:5289";
         
         // Initialize debug hub client
         DebugHubClient = new DebugHubClient(serverAddress);
