@@ -9,7 +9,7 @@ namespace VCDevTool.API.Controllers
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Policy = "AdminPolicy")]
+    // // [Authorize(Policy = "AdminPolicy")] // AUTHENTICATION DISABLED
     public class PerformanceController : ControllerBase
     {
         private readonly IPerformanceMonitoringService _performanceService;

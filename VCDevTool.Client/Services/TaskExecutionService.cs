@@ -314,11 +314,21 @@ namespace VCDevTool.Client.Services
 
         public async Task AbortCurrentTask(string nodeId)
         {
+            UpdateDebugOutput($"[ABORT] Task abort requested for node {nodeId}");
+            bool taskFoundAndCancelled = false;
+            
             try
             {
-                UpdateDebugOutput($"Task abort requested for node {nodeId}");
-                
-                // Kill any running external process for this node
+                // 1. Cancel the current operation first
+                if (_cancellationTokenSource != null)
+                {
+                    _cancellationTokenSource.Cancel();
+                    _cancellationTokenSource.Dispose();
+                    _cancellationTokenSource = new CancellationTokenSource();
+                    UpdateDebugOutput($"[ABORT] Cancellation token cancelled for node {nodeId}");
+                }
+
+                // 2. Kill any running external process for this node
                 if (_runningProcesses.TryRemove(nodeId, out var process))
                 {
                     try
@@ -326,28 +336,114 @@ namespace VCDevTool.Client.Services
                         if (!process.HasExited)
                         {
                             process.Kill(true);
-                            UpdateDebugOutput($"Process for node {nodeId} was killed by abort.");
+                            UpdateDebugOutput($"[ABORT] Process {process.Id} killed for node {nodeId}");
+                        }
+                        else
+                        {
+                            UpdateDebugOutput($"[ABORT] Process for node {nodeId} had already exited");
                         }
                     }
                     catch (Exception ex)
                     {
-                        UpdateDebugOutput($"Error killing process for node {nodeId}: {ex.Message}");
+                        UpdateDebugOutput($"[ABORT] Error killing process for node {nodeId}: {ex.Message}");
                     }
                     finally
                     {
                         process.Dispose();
                     }
                 }
-
-                // Cancel the current operation
-                if (_cancellationTokenSource != null)
+                else
                 {
-                    _cancellationTokenSource.Cancel();
-                    _cancellationTokenSource.Dispose();
-                    _cancellationTokenSource = new CancellationTokenSource();
+                    UpdateDebugOutput($"[ABORT] No running process found for node {nodeId}");
                 }
 
-                // Release all held locks for this node
+                // 3. Get and cancel tasks for this node - try multiple approaches
+                UpdateDebugOutput($"[ABORT] Looking for tasks to cancel for node {nodeId}");
+                
+                try
+                {
+                    var tasks = await _apiClient.GetTasksAsync();
+                    UpdateDebugOutput($"[ABORT] Retrieved {tasks.Count} total tasks from API");
+                    
+                    // Find tasks assigned to this node that are running or pending
+                    var runningTasks = tasks.Where(t => 
+                        t.AssignedNodeId == nodeId && 
+                        (t.Status == BatchTaskStatus.Running || t.Status == BatchTaskStatus.Pending)).ToList();
+                    
+                    UpdateDebugOutput($"[ABORT] Found {runningTasks.Count} running/pending tasks for node {nodeId}");
+                    
+                    foreach (var task in runningTasks)
+                    {
+                        UpdateDebugOutput($"[ABORT] Cancelling task {task.Id} ({task.Type}) - Status: {task.Status}");
+                        
+                        try
+                        {
+                            var result = await _apiClient.UpdateTaskStatusAsync(
+                                task.Id,
+                                BatchTaskStatus.Cancelled,
+                                "Task was manually aborted by user"
+                            );
+                            
+                            if (result != null)
+                            {
+                                UpdateDebugOutput($"[ABORT] Successfully cancelled task {task.Id}");
+                                taskFoundAndCancelled = true;
+                            }
+                            else
+                            {
+                                UpdateDebugOutput($"[ABORT] Warning: Null result when cancelling task {task.Id}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            UpdateDebugOutput($"[ABORT] Error cancelling task {task.Id}: {ex.Message}");
+                            // Continue with other tasks even if one fails
+                        }
+                    }
+                    
+                    // Also check if there are tasks with multiple assigned nodes that include this node
+                    var multiNodeTasks = tasks.Where(t => 
+                        !string.IsNullOrEmpty(t.AssignedNodeIds) && 
+                        t.AssignedNodeIds.Contains(nodeId) &&
+                        (t.Status == BatchTaskStatus.Running || t.Status == BatchTaskStatus.Pending)).ToList();
+                    
+                    if (multiNodeTasks.Any())
+                    {
+                        UpdateDebugOutput($"[ABORT] Found {multiNodeTasks.Count} multi-node tasks involving node {nodeId}");
+                        foreach (var task in multiNodeTasks)
+                        {
+                            if (!runningTasks.Any(rt => rt.Id == task.Id)) // Don't duplicate cancellation
+                            {
+                                UpdateDebugOutput($"[ABORT] Cancelling multi-node task {task.Id}");
+                                try
+                                {
+                                    var result = await _apiClient.UpdateTaskStatusAsync(
+                                        task.Id,
+                                        BatchTaskStatus.Cancelled,
+                                        $"Task was manually aborted by user on node {nodeId}"
+                                    );
+                                    
+                                    if (result != null)
+                                    {
+                                        UpdateDebugOutput($"[ABORT] Successfully cancelled multi-node task {task.Id}");
+                                        taskFoundAndCancelled = true;
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    UpdateDebugOutput($"[ABORT] Error cancelling multi-node task {task.Id}: {ex.Message}");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UpdateDebugOutput($"[ABORT] Error getting tasks from API: {ex.Message}");
+                    throw; // Re-throw to handle in outer catch
+                }
+
+                // 4. Release all held locks for this node
                 List<string> locksToRelease;
                 lock (_lockSetSync)
                 {
@@ -355,68 +451,58 @@ namespace VCDevTool.Client.Services
                     _heldLocks.Clear();
                 }
                 
+                UpdateDebugOutput($"[ABORT] Releasing {locksToRelease.Count} held locks for node {nodeId}");
+                
                 foreach (var normalizedFolderPath in locksToRelease)
                 {
                     try
                     {
                         string folderLockPath = PathUtils.GetFolderLockKey(normalizedFolderPath);
-                        await _apiClient.ReleaseFileLockAsync(folderLockPath, nodeId);
-                        UpdateDebugOutput($"Released lock for folder: {normalizedFolderPath} on abort.");
+                        bool released = await _apiClient.ReleaseFileLockAsync(folderLockPath, nodeId);
+                        UpdateDebugOutput($"[ABORT] Released lock for folder: {normalizedFolderPath} - Success: {released}");
                     }
                     catch (Exception ex)
                     {
-                        UpdateDebugOutput($"Error releasing lock for folder {normalizedFolderPath} on abort: {ex.Message}");
+                        UpdateDebugOutput($"[ABORT] Error releasing lock for folder {normalizedFolderPath}: {ex.Message}");
                     }
                 }
                 
-                // Also clear any lingering locks in the database for this node
+                // 5. Clean up any lingering locks in the database for this node
                 try
                 {
                     var locks = await _apiClient.GetActiveLocksAsync();
-                    var nodeLocks = locks.Where(l => l.LockingNodeId == nodeId && l.FilePath.StartsWith("folder_lock:")).ToList();
+                    var nodeLocks = locks.Where(l => l.LockingNodeId == nodeId).ToList();
                     
                     if (nodeLocks.Any())
                     {
-                        UpdateDebugOutput($"Found {nodeLocks.Count} additional folder locks to clean up for node {nodeId}");
+                        UpdateDebugOutput($"[ABORT] Found {nodeLocks.Count} additional locks to clean up for node {nodeId}");
                         
                         foreach (var lockItem in nodeLocks)
                         {
                             try
                             {
-                                string folderPath = lockItem.FilePath.Substring(12); // Remove "folder_lock:" prefix
-                                string normalizedFolderPath = PathUtils.NormalizePath(folderPath);
-                                string folderLockPath = PathUtils.GetFolderLockKey(normalizedFolderPath);
-                                await _apiClient.ReleaseFileLockAsync(folderLockPath, nodeId);
-                                UpdateDebugOutput($"Released leftover lock: {folderPath}");
+                                bool released = await _apiClient.ReleaseFileLockAsync(lockItem.FilePath, nodeId);
+                                UpdateDebugOutput($"[ABORT] Released leftover lock: {lockItem.FilePath} - Success: {released}");
                             }
                             catch (Exception ex)
                             {
-                                UpdateDebugOutput($"Error releasing leftover lock {lockItem.FilePath}: {ex.Message}");
+                                UpdateDebugOutput($"[ABORT] Error releasing leftover lock {lockItem.FilePath}: {ex.Message}");
                             }
                         }
+                    }
+                    else
+                    {
+                        UpdateDebugOutput($"[ABORT] No additional locks found for node {nodeId}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    UpdateDebugOutput($"Error cleaning up leftover locks: {ex.Message}");
+                    UpdateDebugOutput($"[ABORT] Error cleaning up leftover locks: {ex.Message}");
                 }
                 
-                // Get tasks for this node
-                var tasks = await _apiClient.GetTasksAsync();
-                var runningTask = tasks.FirstOrDefault(t => 
-                    t.AssignedNodeId == nodeId && 
-                    (t.Status == BatchTaskStatus.Running || t.Status == BatchTaskStatus.Pending));
-                
-                if (runningTask != null)
+                // 6. Update UI
+                try
                 {
-                    // Mark the task as cancelled in the database
-                    await _apiClient.UpdateTaskStatusAsync(
-                        runningTask.Id,
-                        BatchTaskStatus.Cancelled,
-                        "Task was manually aborted by user"
-                    );
-                    
-                    // Update UI
                     System.Windows.Application.Current.Dispatcher.Invoke(() =>
                     {
                         var mainWindow = System.Windows.Application.Current.MainWindow;
@@ -426,16 +512,40 @@ namespace VCDevTool.Client.Services
                             if (node != null)
                             {
                                 node.ClearActiveTask();
-                                UpdateDebugOutput($"Task aborted: {runningTask.Type} ({runningTask.Id})");
+                                UpdateDebugOutput($"[ABORT] UI updated for node {nodeId}");
+                            }
+                            else
+                            {
+                                UpdateDebugOutput($"[ABORT] Warning: Node {nodeId} not found in UI");
                             }
                         }
+                        else
+                        {
+                            UpdateDebugOutput($"[ABORT] Warning: MainViewModel not found for UI update");
+                        }
                     });
+                }
+                catch (Exception ex)
+                {
+                    UpdateDebugOutput($"[ABORT] Error updating UI: {ex.Message}");
+                }
+
+                if (taskFoundAndCancelled)
+                {
+                    UpdateDebugOutput($"[ABORT] Task abort completed successfully for node {nodeId}");
+                }
+                else
+                {
+                    UpdateDebugOutput($"[ABORT] Warning: No active tasks found to cancel for node {nodeId}");
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error aborting task: {ex.Message}");
-                UpdateDebugOutput($"Error aborting task: {ex.Message}");
+                UpdateDebugOutput($"[ABORT] Critical error aborting task for node {nodeId}: {ex.Message}");
+                UpdateDebugOutput($"[ABORT] Stack trace: {ex.StackTrace}");
+                
+                // Re-throw the exception so the calling code knows there was an error
+                throw new Exception($"Failed to abort task for node {nodeId}: {ex.Message}", ex);
             }
         }
 

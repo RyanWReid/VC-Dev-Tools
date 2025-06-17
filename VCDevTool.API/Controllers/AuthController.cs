@@ -171,7 +171,7 @@ namespace VCDevTool.API.Controllers
         }
 
         [HttpPost("refresh")]
-        [Authorize]
+        // [Authorize]
         public ActionResult<AuthResponse> RefreshToken()
         {
             try
@@ -209,7 +209,7 @@ namespace VCDevTool.API.Controllers
         }
 
         [HttpPost("logout")]
-        [Authorize]
+        // [Authorize]
         public ActionResult Logout()
         {
             // In a real implementation, you might want to blacklist the token

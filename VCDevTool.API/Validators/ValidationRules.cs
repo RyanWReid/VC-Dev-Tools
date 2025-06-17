@@ -1,6 +1,7 @@
 using FluentValidation;
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using VCDevTool.API.Models;
 using VCDevTool.Shared;
 
@@ -120,10 +121,10 @@ namespace VCDevTool.API.Validators
             RuleFor(x => x.IpAddress)
                 .NotEmpty()
                 .WithMessage("IP address is required")
-                .MaximumLength(45)
-                .WithMessage("IP address cannot exceed 45 characters")
-                .Must(BeValidIpAddress)
-                .WithMessage("Invalid IP address format");
+                .MaximumLength(100) // Increased to accommodate node identifiers
+                .WithMessage("IP address cannot exceed 100 characters")
+                .Must(BeValidIpAddressOrNodeId)
+                .WithMessage("Invalid IP address or node identifier format");
 
             RuleFor(x => x.HardwareFingerprint)
                 .NotEmpty()
@@ -132,9 +133,21 @@ namespace VCDevTool.API.Validators
                 .WithMessage("Hardware fingerprint cannot exceed 256 characters");
         }
 
-        private bool BeValidIpAddress(string ipAddress)
+        private bool BeValidIpAddressOrNodeId(string ipAddress)
         {
-            return IPAddress.TryParse(ipAddress, out _);
+            // Allow valid IP addresses
+            if (IPAddress.TryParse(ipAddress, out _))
+                return true;
+            
+            // Allow node identifiers in format: NODE-{machineName}-{hash/timestamp}
+            // This accommodates fallback identifiers when real IP detection fails
+            if (ipAddress.StartsWith("NODE-") && ipAddress.Length <= 100)
+            {
+                // Ensure it contains only alphanumeric characters, hyphens, and underscores
+                return Regex.IsMatch(ipAddress, @"^NODE-[a-zA-Z0-9\-_]+$");
+            }
+            
+            return false;
         }
     }
 
@@ -212,10 +225,9 @@ namespace VCDevTool.API.Validators
                 .WithMessage("Node ID can only contain alphanumeric characters, hyphens, and underscores");
 
             RuleFor(x => x.ApiKey)
-                .NotEmpty()
-                .WithMessage("API key is required")
                 .MinimumLength(10)
-                .WithMessage("API key must be at least 10 characters long");
+                .WithMessage("API key must be at least 10 characters long")
+                .When(x => !string.IsNullOrEmpty(x.ApiKey));
 
             RuleFor(x => x.HardwareFingerprint)
                 .NotEmpty()

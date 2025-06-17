@@ -201,7 +201,17 @@ namespace VCDevTool.Client.Services
                     WindowsIdentity = GetWindowsIdentityInfo()
                 };
 
+                // DEBUG: Log what we're sending
+                var requestJson = JsonSerializer.Serialize(registerRequest, _jsonOptions);
+                System.Diagnostics.Debug.WriteLine($"[AUTH] Sending registration request to: {_httpClient.BaseAddress}api/auth/register");
+                System.Diagnostics.Debug.WriteLine($"[AUTH] Request body: {requestJson}");
+                
                 var response = await _httpClient.PostAsJsonAsync("api/auth/register", registerRequest, _jsonOptions);
+                
+                // DEBUG: Log the response
+                System.Diagnostics.Debug.WriteLine($"[AUTH] Response status: {response.StatusCode}");
+                var responseContent = await response.Content.ReadAsStringAsync();
+                System.Diagnostics.Debug.WriteLine($"[AUTH] Response content: {responseContent}");
                 
                 if (response.IsSuccessStatusCode)
                 {
@@ -242,6 +252,7 @@ namespace VCDevTool.Client.Services
                 var loginRequest = new
                 {
                     NodeId = nodeId,
+                    ApiKey = "", // Empty API key - server will validate based on hardware fingerprint
                     HardwareFingerprint = hardwareFingerprint,
                     // Include Windows identity information for enhanced authentication
                     WindowsIdentity = GetWindowsIdentityInfo()

@@ -391,26 +391,28 @@ namespace VCDevTool.API.Services
             // Normalize the path using shared helper so API & client match
             filePath = PathUtils.NormalizePath(filePath);
             
+            _logger.LogInformation("Starting lock acquisition for file: {FilePath}, node: {NodeId}", filePath, nodeId);
+            
             // Get lock options from configuration
-            int maxAttempts = _lockOptions.MaxLockAttempts;
-            var random = new Random();
             var lockTimeout = TimeSpan.FromMinutes(_lockOptions.LockTimeoutMinutes);
             
-            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            try
             {
-                try
+                // Use SQL Server execution strategy to handle retries with transactions
+                var strategy = _dbContext.Database.CreateExecutionStrategy();
+                return await strategy.ExecuteAsync(async () =>
                 {
-                    // Use a transaction with serializable isolation level to ensure atomicity
                     using var transaction = await _dbContext.Database.BeginTransactionAsync();
                     try
                     {
-                        // First check if lock exists using SQL Server locking to prevent race conditions
+                        // First check if lock exists
                         var existingLock = await _dbContext.FileLocks
-                            .FromSqlRaw("SELECT * FROM FileLocks WITH (UPDLOCK, ROWLOCK) WHERE FilePath = {0}", filePath)
+                            .Where(fl => fl.FilePath == filePath)
                             .FirstOrDefaultAsync();
                             
                         if (existingLock == null)
                         {
+                            _logger.LogInformation("No existing lock found for file: {FilePath}, creating new lock", filePath);
                             // No lock exists - create a new one
                             var newLock = new FileLock
                             {
@@ -422,11 +424,12 @@ namespace VCDevTool.API.Services
                             _dbContext.FileLocks.Add(newLock);
                             await _dbContext.SaveChangesAsync();
                             await transaction.CommitAsync();
-                            _logger.LogInformation("Acquired new lock for file: {FilePath} by node: {NodeId} (attempt {Attempt})", filePath, nodeId, attempt);
+                            _logger.LogInformation("Acquired new lock for file: {FilePath} by node: {NodeId}", filePath, nodeId);
                             return true;
                         }
                         else
                         {
+                            _logger.LogInformation("Found existing lock for file: {FilePath}, owned by node: {OwnerNodeId}", filePath, existingLock.LockingNodeId);
                             // Lock exists - check if it's stale or belongs to this node
                             if (DateTime.UtcNow - existingLock.LastUpdatedAt > lockTimeout)
                             {
@@ -471,19 +474,6 @@ namespace VCDevTool.API.Services
                                 _logger.LogInformation("Lock acquisition failed for file {FilePath} - already locked by node {OtherNodeId} ({NodeName}) for {Duration:F1} minutes", 
                                     filePath, existingLock.LockingNodeId, lockingNodeName, lockDuration.TotalMinutes);
                                 
-                                // Check if the locking node still exists and is active
-                                if (lockingNode == null)
-                                {
-                                    _logger.LogWarning("Lock is held by non-existent node {OtherNodeId} - will retry", existingLock.LockingNodeId);
-                                    continue; // Retry immediately in this case
-                                }
-                                else if (DateTime.UtcNow - lockingNode.LastHeartbeat > TimeSpan.FromMinutes(5))
-                                {
-                                    _logger.LogWarning("Lock is held by inactive node {OtherNodeId} ({NodeName}) - last heartbeat was {Duration:F1} minutes ago", 
-                                        existingLock.LockingNodeId, lockingNodeName, (DateTime.UtcNow - lockingNode.LastHeartbeat).TotalMinutes);
-                                    continue; // Retry immediately for inactive nodes
-                                }
-                                
                                 return false;
                             }
                         }
@@ -491,30 +481,16 @@ namespace VCDevTool.API.Services
                     catch (Exception)
                     {
                         await transaction.RollbackAsync();
-                        throw; // Rethrow to be caught by the outer try-catch
+                        throw;
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning("Failed to acquire lock for file: {FilePath} by node: {NodeId} (attempt {Attempt}): {Error}", 
-                        filePath, nodeId, attempt, ex.Message);
-                    
-                    if (attempt < maxAttempts)
-                    {
-                        int delayMs = _lockOptions.RetryDelayBaseMs + random.Next(_lockOptions.RetryDelayRandomMs);
-                        await Task.Delay(delayMs);
-                        _logger.LogInformation("Retrying lock acquisition for file: {FilePath} by node: {NodeId} (attempt {Attempt})", 
-                            filePath, nodeId, attempt + 1);
-                    }
-                    else
-                    {
-                        _logger.LogError("All lock acquisition attempts failed for file: {FilePath} by node: {NodeId} after {MaxAttempts} attempts", 
-                            filePath, nodeId, maxAttempts);
-                        return false;
-                    }
-                }
+                });
             }
-            return false;
+            catch (Exception ex)
+            {
+                _logger.LogError("Failed to acquire lock for file: {FilePath} by node: {NodeId}: {Error}", 
+                    filePath, nodeId, ex.Message);
+                return false;
+            }
         }
 
         public async Task<bool> ReleaseFileLockAsync(string filePath, string nodeId)
@@ -522,21 +498,18 @@ namespace VCDevTool.API.Services
             // Normalize the path using shared helper so API & client match
             filePath = PathUtils.NormalizePath(filePath);
             
-            int maxAttempts = _lockOptions.MaxLockAttempts;
-            var random = new Random();
-            
-            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            try
             {
-                try
+                // Use SQL Server execution strategy to handle retries with transactions
+                var strategy = _dbContext.Database.CreateExecutionStrategy();
+                return await strategy.ExecuteAsync(async () =>
                 {
-                    // Use a transaction to ensure atomic operation
                     using var transaction = await _dbContext.Database.BeginTransactionAsync();
-                    
                     try
                     {
-                        // Get the lock with SQL Server locking to prevent race conditions
+                        // Get the lock
                         var fileLock = await _dbContext.FileLocks
-                            .FromSqlRaw("SELECT * FROM FileLocks WITH (UPDLOCK, ROWLOCK) WHERE FilePath = {0}", filePath)
+                            .Where(fl => fl.FilePath == filePath)
                             .FirstOrDefaultAsync();
         
                         if (fileLock == null)
@@ -579,31 +552,16 @@ namespace VCDevTool.API.Services
                     catch (Exception)
                     {
                         await transaction.RollbackAsync();
-                        throw; // Rethrow to be caught by the outer try-catch
+                        throw;
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error releasing lock for file {FilePath} by node {NodeId} (attempt {Attempt}): {Message}", 
-                        filePath, nodeId, attempt, ex.Message);
-                    
-                    if (attempt < maxAttempts)
-                    {
-                        int delayMs = _lockOptions.RetryDelayBaseMs + random.Next(_lockOptions.RetryDelayRandomMs);
-                        await Task.Delay(delayMs);
-                        _logger.LogInformation("Retrying lock release for file: {FilePath} by node: {NodeId} (attempt {Attempt})", 
-                            filePath, nodeId, attempt + 1);
-                    }
-                    else
-                    {
-                        // After all retries failed, notify admin but don't try direct SQL deletion
-                        _logger.LogCritical("All attempts to release lock for {FilePath} failed. Manual intervention may be required.", filePath);
-                        return false;
-                    }
-                }
+                });
             }
-            
-            return false;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error releasing lock for file {FilePath} by node {NodeId}: {Message}", 
+                    filePath, nodeId, ex.Message);
+                return false;
+            }
         }
 
         public async Task<List<FileLock>> GetActiveLocksAsync()

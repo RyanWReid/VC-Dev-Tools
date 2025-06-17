@@ -34,6 +34,9 @@
         <!-- New converter for arrow rotation -->
         <local:BooleanToRotationConverter x:Key="BooleanToRotationConverter" />
         
+        <!-- Status to color converter -->
+        <converters:StatusToColorConverter x:Key="StatusToColorConverter" />
+        
         <Style TargetType="Button" x:Key="ActionButton">
             <Setter Property="Background" Value="#3E3E42" />
             <Setter Property="Foreground" Value="#F0F0F0" />
@@ -761,8 +764,9 @@
                         </Grid>
                         
                         <!-- Connection Status -->
-                        <TextBlock Text="{Binding ConnectionStatus}" Foreground="#F0F0F0" 
-                                   FontSize="14" Margin="0,0,0,30" TextWrapping="Wrap" 
+                        <TextBlock Text="{Binding ConnectionStatus}" 
+                                   Foreground="{Binding ConnectionStatus, Converter={StaticResource StatusToColorConverter}}"
+                                   FontSize="14" Margin="0,0,0,30" TextWrapping="Wrap" FontWeight="SemiBold"
                                    Visibility="{Binding ConnectionStatus, Converter={StaticResource StringToVisibilityConverter}}" />
                         
                         <!-- Material Scanner Settings Section -->
@@ -1792,8 +1796,9 @@
                         </Grid>
                         
                         <!-- Connection Status -->
-                        <TextBlock Grid.Row="2" Text="{Binding ConnectionStatus}" Foreground="#F0F0F0" 
-                                  FontSize="12" Margin="0,0,0,20" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="2" Text="{Binding ConnectionStatus}" 
+                                  Foreground="{Binding ConnectionStatus, Converter={StaticResource StatusToColorConverter}}"
+                                  FontSize="12" Margin="0,0,0,20" TextWrapping="Wrap" FontWeight="SemiBold" />
                         
                         <!-- Dialog Buttons -->
                         <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
@@ -2270,17 +2275,18 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     
-                    <!-- Authentication Status Icon -->
+                    <!-- Connection Status Icon -->
                     <Ellipse Grid.Column="0" Width="8" Height="8" Margin="16,0,8,0" 
                              Fill="{Binding AuthenticationStatusIconColor}" VerticalAlignment="Center" />
                     
-                    <!-- Authentication Status Text -->
+                    <!-- Connection Status Text -->
                     <TextBlock Grid.Column="1" Text="{Binding AuthenticationStatus}" 
                                Foreground="{Binding AuthenticationStatusTextColor}" FontSize="11" VerticalAlignment="Center" />
                     
                     <!-- Connection Status (if different from auth) -->
                     <TextBlock Grid.Column="2" Text="{Binding ConnectionStatus}" 
-                               Foreground="#E0E0E0" FontSize="10" VerticalAlignment="Center" 
+                               Foreground="{Binding ConnectionStatus, Converter={StaticResource StatusToColorConverter}}"
+                               FontSize="10" VerticalAlignment="Center" FontWeight="SemiBold"
                                Margin="0,0,16,0"
                                Visibility="{Binding ConnectionStatus, Converter={StaticResource StringToVisibilityConverter}}" />
                 </Grid>

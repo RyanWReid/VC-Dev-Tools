@@ -258,10 +258,10 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("ADRoleUserPolicy", policy =>
         policy.Requirements.Add(new ADRoleRequirement(new[] { "User", "Admin" })));
 
-    // Fallback policy for authenticated users
-    options.FallbackPolicy = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .Build();
+    // AUTHENTICATION DISABLED - No fallback policy required
+    // options.FallbackPolicy = new AuthorizationPolicyBuilder()
+    //     .RequireAuthenticatedUser()
+    //     .Build();
 });
 
 // Register Active Directory and Authorization services
@@ -463,16 +463,13 @@ app.MapHealthChecks("/health");
 
 app.UseRouting();
 
-// Authentication & Authorization
-app.UseAuthentication();
-
-// Add Windows Authentication enrichment middleware after authentication
-if (isWindowsAuthEnabled)
-{
-    app.UseWindowsAuthenticationEnrichment();
-}
-
-app.UseAuthorization();
+// AUTHENTICATION DISABLED FOR SIMPLIFIED SETUP
+// app.UseAuthentication();
+// if (isWindowsAuthEnabled)
+// {
+//     app.UseWindowsAuthenticationEnrichment();
+// }
+// app.UseAuthorization();
 
 app.MapControllers();
 app.MapRazorPages();

@@ -324,6 +324,10 @@ namespace VCDevTool.Client.ViewModels
                 {
                     _isConnected = value;
                     OnPropertyChanged(nameof(IsConnected));
+                    // Update status bar when connection changes
+                    OnPropertyChanged(nameof(AuthenticationStatus));
+                    OnPropertyChanged(nameof(AuthenticationStatusColor));
+                    OnPropertyChanged(nameof(AuthenticationStatusIconColor));
                 }
             }
         }
@@ -1013,12 +1017,10 @@ namespace VCDevTool.Client.ViewModels
 
         // Authentication Status Properties
         public bool IsAuthenticationEnabled => _authenticationService?.IsAuthenticated ?? false;
-        public string AuthenticationStatus => _authenticationService?.IsAuthenticated == true 
-            ? $"Authenticated as {_authenticationService.CurrentNodeId}" 
-            : "Not Authenticated";
-        public string AuthenticationStatusColor => _authenticationService?.IsAuthenticated == true ? "#28A745" : "#DC3545";
-        public string AuthenticationStatusTextColor => _authenticationService?.IsAuthenticated == true ? "#FFFFFF" : "#FFFFFF";
-        public string AuthenticationStatusIconColor => _authenticationService?.IsAuthenticated == true ? "#FFFFFF" : "#FFFFFF";
+        public string AuthenticationStatus => IsConnected ? "Online" : "Offline";
+        public string AuthenticationStatusColor => IsConnected ? "#28A745" : "#DC3545";
+        public string AuthenticationStatusTextColor => "#FFFFFF";
+        public string AuthenticationStatusIconColor => IsConnected ? "#28A745" : "#DC3545";
 
         private void OnAuthenticationStatusChanged(object? sender, AuthenticationEventArgs e)
         {
@@ -1266,16 +1268,15 @@ namespace VCDevTool.Client.ViewModels
                 
                 if (connected)
                 {
-                    ConnectionStatus = "API connected, authenticating...";
+                    ConnectionStatus = "Connected";
                     IsConnected = true;
 
                     try
                     {
-                        // Register our node (this handles authentication internally)
-                        var registeredNode = await _nodeService.RegisterNodeAsync();
-                        ConnectionStatus = "Connected and authenticated";
+                        // AUTHENTICATION DISABLED - Skip node registration
+                        ConnectionStatus = "Connected";
                         
-                        DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Initialized and authenticated as node: {registeredNode.Id}\n";
+                        DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Successfully connected to server (no authentication required)\n";
                         
                         // Refresh initial data (nodes and tasks)
                         await RefreshDataAsync();
@@ -1972,51 +1973,35 @@ namespace VCDevTool.Client.ViewModels
                 }
 
                 // Test the connection first
-                ConnectionStatus = "Testing connection...";
+                ConnectionStatus = "Connecting...";
                 bool connected = await _apiClient.TestConnectionAsync();
                 if (!connected)
                 {
-                    ConnectionStatus = "Failed to connect to server";
+                    ConnectionStatus = "Connection failed";
                     IsConnected = false;
                     return;
                 }
-
-                ConnectionStatus = "Server connected, authenticating...";
                 
                 try
                 {
-                    // Register our node (this handles authentication internally)
-                    var registeredNode = await _nodeService.RegisterNodeAsync();
-                    
-                    ConnectionStatus = "Connected and authenticated";
+                    // AUTHENTICATION DISABLED - Just test basic API access
+                    ConnectionStatus = "Connected";
                     IsConnected = true;
                     
-                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Successfully connected and authenticated as node: {registeredNode.Id}\n";
+                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Successfully connected to server (no authentication required)\n";
                     
                     // Refresh data
                     await RefreshDataAsync();
                 }
-                catch (UnauthorizedAccessException authEx)
+                catch (Exception ex)
                 {
-                    ConnectionStatus = $"Authentication failed: {authEx.Message}";
+                    ConnectionStatus = "Connection failed";
                     IsConnected = false;
-                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Authentication error: {authEx.Message}\n";
+                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Connection error: {ex.Message}\n";
                     
                     MessageBox.Show(
-                        $"Failed to authenticate with the server:\n{authEx.Message}\n\nPlease check your server connection and try again.",
-                        "Authentication Error",
-                        MessageBoxButton.OK,
-                        MessageBoxImage.Warning);
-                }
-                catch (Exception regEx)
-                {
-                    ConnectionStatus = $"Registration failed: {regEx.Message}";
-                    IsConnected = false;
-                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Registration error: {regEx.Message}\n";
-                    
-                    MessageBox.Show(
-                        $"Failed to register with the server:\n{regEx.Message}\n\nThis may be due to server configuration issues.",
-                        "Registration Error",
+                        $"Failed to connect to the server:\n{ex.Message}\n\nPlease check your server connection and try again.",
+                        "Connection Error",
                         MessageBoxButton.OK,
                         MessageBoxImage.Error);
                 }
@@ -2449,10 +2434,13 @@ namespace VCDevTool.Client.ViewModels
         private async void AbortTask()
         {
             if (SelectedTask == null || !SelectedTask.CanAbort)
+            {
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Cannot abort task - SelectedTask is null or cannot be aborted\n";
                 return;
+            }
 
             var result = MessageBox.Show(
-                $"Are you sure you want to cancel this task?",
+                $"Are you sure you want to cancel task '{SelectedTask.Name}' (ID: {SelectedTask.Id})?",
                 "Cancel Task",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning
@@ -2462,15 +2450,34 @@ namespace VCDevTool.Client.ViewModels
             try
             {
                 IsLoading = true;
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Starting task abort for Task ID {SelectedTask.Id} on node {SelectedTask.AssignedNodeName} ({SelectedTask.AssignedNodeId})\n";
+                
+                // Validate nodeId before calling abort
+                if (string.IsNullOrEmpty(SelectedTask.AssignedNodeId))
+                {
+                    throw new InvalidOperationException("Cannot abort task - no assigned node ID");
+                }
+                
                 await _taskExecutionService.AbortCurrentTask(SelectedTask.AssignedNodeId);
-                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Task abort requested for node {SelectedTask.AssignedNodeName}\n";
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Task abort completed for Task ID {SelectedTask.Id}\n";
+                
+                // Refresh the task list to see the updated status
                 await RefreshTaskListAsync();
                 OnPropertyChanged(nameof(SelectedTask));
+                
+                MessageBox.Show("Task cancellation request sent successfully.", "Task Cancelled", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to cancel task: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] ERROR: {ex.Message}\n";
+                string errorMessage = $"Failed to cancel task: {ex.Message}";
+                MessageBox.Show(errorMessage, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                DebugOutput += $"[{DateTime.Now:HH:mm:ss}] ERROR cancelling task: {ex.Message}\n";
+                
+                // Add more detailed error logging
+                if (ex.InnerException != null)
+                {
+                    DebugOutput += $"[{DateTime.Now:HH:mm:ss}] Inner exception: {ex.InnerException.Message}\n";
+                }
             }
             finally
             {

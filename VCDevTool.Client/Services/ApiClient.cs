@@ -44,15 +44,8 @@ namespace VCDevTool.Client.Services
 
         private void OnAuthenticationChanged(object? sender, AuthenticationEventArgs e)
         {
-            if (e.IsAuthenticated && !string.IsNullOrEmpty(_authService.CurrentToken))
-            {
-                _httpClient.DefaultRequestHeaders.Authorization = 
-                    new AuthenticationHeaderValue("Bearer", _authService.CurrentToken);
-            }
-            else
-            {
-                _httpClient.DefaultRequestHeaders.Authorization = null;
-            }
+            // AUTHENTICATION DISABLED - No authorization headers needed
+            _httpClient.DefaultRequestHeaders.Authorization = null;
         }
 
         // Test connection to the API
@@ -402,20 +395,8 @@ namespace VCDevTool.Client.Services
 
         private async Task EnsureAuthenticatedAsync()
         {
-            if (!_authService.IsAuthenticated)
-            {
-                // Try to refresh the token if we have one
-                if (!string.IsNullOrEmpty(_authService.CurrentToken))
-                {
-                    await _authService.RefreshTokenAsync();
-                }
-                
-                // If still not authenticated, the calling code will need to handle this
-                if (!_authService.IsAuthenticated)
-                {
-                    throw new UnauthorizedAccessException("Not authenticated. Please register or login first.");
-                }
-            }
+            // AUTHENTICATION DISABLED - No authentication required
+            await Task.CompletedTask;
         }
 
         private async Task<T> ExecuteWithRetryAsync<T>(Func<Task<T>> action)

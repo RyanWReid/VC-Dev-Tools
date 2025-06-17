@@ -7,7 +7,7 @@ namespace VCDevTool.API.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize(Policy = "NodePolicy")] // Require authentication for all endpoints
+    // // [Authorize(Policy = "NodePolicy")] // AUTHENTICATION DISABLED
     public class FileLocksController : ControllerBase
     {
         private readonly ITaskService _taskService;
@@ -34,12 +34,7 @@ namespace VCDevTool.API.Controllers
                 return BadRequest("Invalid lock request");
             }
 
-            // Verify the requesting node matches the authenticated node
-            var authenticatedNodeId = User.FindFirst("node_id")?.Value;
-            if (request.NodeId != authenticatedNodeId)
-            {
-                return Forbid("Cannot acquire lock for different node");
-            }
+            // AUTHENTICATION DISABLED - Skip node verification
 
             var success = await _taskService.TryAcquireFileLockAsync(request.FilePath, request.NodeId);
             if (!success)
@@ -58,12 +53,7 @@ namespace VCDevTool.API.Controllers
                 return BadRequest("Invalid lock request");
             }
 
-            // Verify the requesting node matches the authenticated node
-            var authenticatedNodeId = User.FindFirst("node_id")?.Value;
-            if (request.NodeId != authenticatedNodeId)
-            {
-                return Forbid("Cannot release lock for different node");
-            }
+            // AUTHENTICATION DISABLED - Skip node verification
 
             var success = await _taskService.ReleaseFileLockAsync(request.FilePath, request.NodeId);
             if (!success)
@@ -75,13 +65,12 @@ namespace VCDevTool.API.Controllers
         }
 
         [HttpPost("reset")]
-        [Authorize(Policy = "AdminPolicy")] // Admin only operation
+        // [Authorize(Policy = "AdminPolicy")] // Admin only operation
         public async Task<ActionResult> ResetAllLocks()
         {
             try
             {
-                _logger.LogInformation("Attempting to reset all file locks - requested by {NodeId}", 
-                    User.FindFirst("node_id")?.Value);
+                _logger.LogInformation("Attempting to reset all file locks");
                 
                 var clearResult = await _taskService.ResetAllFileLocksAsync();
                 

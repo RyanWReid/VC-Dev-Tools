@@ -23,8 +23,10 @@ namespace VCDevTool.API.Data
             {
                 entity.HasKey(n => n.Id);
                 
+                // Note: IP address is not unique - same IP can be shared by multiple nodes
+                // due to NAT, VPN, containerization, etc.
                 entity.HasIndex(n => n.IpAddress)
-                    .IsUnique();
+                    .HasDatabaseName("IX_Nodes_IpAddress");
                 
                 // Index for heartbeat monitoring and availability queries
                 entity.HasIndex(n => new { n.IsAvailable, n.LastHeartbeat })

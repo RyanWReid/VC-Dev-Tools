@@ -8,7 +8,7 @@ namespace VCDevTool.API.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize(Policy = "NodePolicy")] // Require authentication for all endpoints
+    // // [Authorize(Policy = "NodePolicy")] // AUTHENTICATION DISABLED
     public class TasksController : ControllerBase
     {
         private readonly ITaskService _taskService;
@@ -45,7 +45,7 @@ namespace VCDevTool.API.Controllers
         }
 
         [HttpPost]
-        [Authorize(Policy = "AdminPolicy")] // Only admins can create tasks
+        // [Authorize(Policy = "AdminPolicy")] // Only admins can create tasks
         public async Task<ActionResult<BatchTask>> CreateTask(BatchTask task)
         {
             if (task == null)
@@ -139,7 +139,7 @@ namespace VCDevTool.API.Controllers
         }
 
         [HttpPut("{id}/assign/{nodeId}")]
-        [Authorize(Policy = "AdminPolicy")] // Only admins can assign tasks
+        // [Authorize(Policy = "AdminPolicy")] // Only admins can assign tasks
         public async Task<ActionResult> AssignTask(int id, string nodeId)
         {
             var success = await _taskService.AssignTaskToNodeAsync(id, nodeId);

@@ -23,7 +23,15 @@ namespace VCDevTool.Client.Converters
                     case "RUNNING":
                         return new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FFA500")); // Orange
                     default:
-                        return new SolidColorBrush(Colors.White); // Default color
+                        // Check for connection status messages
+                        if (status.Contains("CONNECTED") || status.Contains("SUCCESS"))
+                            return new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#069E2D")); // Green
+                        else if (status.Contains("FAILED") || status.Contains("ERROR") || status.Contains("DISCONNECTED") || status.Contains("NOT CONNECTED"))
+                            return new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FF5252")); // Red
+                        else if (status.Contains("CONNECTING") || status.Contains("INITIALIZING") || status.Contains("TESTING"))
+                            return new SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString("#FFA500")); // Orange
+                        else
+                            return new SolidColorBrush(Colors.White); // Default color
                 }
             }
             
